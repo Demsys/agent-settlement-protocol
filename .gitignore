@@ -1,0 +1,30 @@
+# Créer le .gitignore
+cat > .gitignore << 'EOF'
+# Variables d'environnement — JAMAIS committer la clé privée du wallet
+.env
+.env.local
+.env.*.local
+
+# Dépendances Node.js
+node_modules/
+
+# Artefacts de compilation Hardhat
+artifacts/
+cache/
+typechain-types/
+
+# Rapports de coverage
+coverage/
+coverage.json
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/settings.json
+EOF
