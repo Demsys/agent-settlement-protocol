@@ -44,10 +44,17 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      * @notice Represents an evaluator's state in the registry.
      * @dev active flag avoids re-checking stake >= minEvaluatorStake on every call.
      *      index stores the position in the activeEvaluators array to enable O(1) removal.
+     *      activeSince is the Unix timestamp at which the evaluator last crossed the
+     *      minEvaluatorStake threshold. Used by the warmup period filter in assignEvaluator()
+     *      to prevent Sybil attacks via freshly-staked wallets (ERC-8183 forum feedback).
+     *      Layout: stakedAmount (256) + index (256) = two 32-byte slots;
+     *              activeSince (64) + active (8) fit together in a third slot — Solidity
+     *              packs these automatically since they share a 32-byte slot.
      */
     struct Evaluator {
         uint256 stakedAmount;   // Total tokens currently staked
         uint256 index;          // Index in the activeEvaluators array (valid only when active)
+        uint64  activeSince;    // Timestamp when the evaluator last became active (crossed minEvaluatorStake)
         bool    active;         // True if stakedAmount >= minEvaluatorStake
     }
 
@@ -64,6 +71,9 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
     /// @notice Emitted when an evaluator is slashed by the job manager.
     event EvaluatorSlashed(address indexed evaluator, uint256 amount, uint256 remainingStake);
+
+    /// @notice Emitted when the owner updates the warmup period.
+    event WarmupPeriodUpdated(uint64 newPeriod);
 
     // ─── Errors ───────────────────────────────────────────────────────────────
 
@@ -89,11 +99,31 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @notice Thrown when slash() tries to slash more than the evaluator's stake.
     error SlashExceedsStake(uint256 requested, uint256 available);
 
+    /// @notice Thrown when setWarmupPeriod() is called with a period exceeding the 30-day cap.
+    /// @param proposed The warmup period that was proposed.
+    /// @param maximum  The maximum allowed warmup period (30 days).
+    error WarmupPeriodTooLong(uint64 proposed, uint64 maximum);
+
     // ─── Constants ────────────────────────────────────────────────────────────
 
     /// @notice Minimum stake required to be eligible as an evaluator.
     /// @dev 100 tokens with 18 decimals = 100 * 1e18. Governable via setMinEvaluatorStake().
     uint256 public minEvaluatorStake = 100 * 1e18;
+
+    /// @notice Absolute ceiling on the warmup period, enforced in setWarmupPeriod().
+    /// @dev 30 days is already a very conservative anti-Sybil window. A higher value
+    ///      would risk starving the registry of eligible evaluators during bootstrapping.
+    uint64 public constant MAX_WARMUP_PERIOD = 30 days;
+
+    // ─── Warmup period (anti-Sybil) ───────────────────────────────────────────
+
+    /// @notice Minimum duration an evaluator must have been above minEvaluatorStake
+    ///         before they are eligible for assignment.
+    /// @dev Initialized to 7 days. Governable via setWarmupPeriod().
+    ///      A new staker (or one who unstaked and restaked) must wait this long
+    ///      before their stake counts in assignEvaluator()'s weighted selection,
+    ///      making Sybil attacks via temporary staking economically unattractive.
+    uint64 public warmupPeriod = 7 days;
 
     // ─── Immutables ───────────────────────────────────────────────────────────
 
@@ -170,8 +200,14 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
         // Activate the evaluator if they cross the minimum threshold and are not yet active.
         if (!eval.active && eval.stakedAmount >= minEvaluatorStake) {
-            eval.active = true;
-            eval.index = activeEvaluators.length;
+            eval.active      = true;
+            eval.index       = activeEvaluators.length;
+            // Record the activation timestamp for the warmup filter in assignEvaluator().
+            // If this evaluator previously unstaked below the threshold and is now re-staking,
+            // activeSince is reset to now — the warmup period starts over. This prevents
+            // a Sybil pattern where an attacker repeatedly stakes/unstakes to exploit
+            // brief windows of "warmed-up" status accumulated before a prior slash.
+            eval.activeSince = uint64(block.timestamp);
             activeEvaluators.push(msg.sender);
         }
 
@@ -237,13 +273,31 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         uint256 count = activeEvaluators.length;
         if (count == 0) revert NoEligibleEvaluators();
 
-        // Compute total staked across all active evaluators for weighted selection.
+        // Capture the current warmup threshold once to avoid repeated storage reads.
+        uint64 warmupThreshold = uint64(block.timestamp) - warmupPeriod;
+        // Note: if block.timestamp < warmupPeriod (impossible in practice — block timestamps
+        // are Unix epoch values far above any realistic warmupPeriod), the subtraction would
+        // underflow. We rely on the 30-day cap in setWarmupPeriod() making this safe.
+
+        // Compute total staked across all eligible (warmed-up) evaluators for weighted selection.
+        // Evaluators whose activeSince > warmupThreshold (i.e. block.timestamp < activeSince + warmupPeriod)
+        // are excluded from both the totalStake sum and the selection walk.
         // This is O(n) — acceptable for the current expected registry size (<1000 evaluators).
         uint256 totalStake = 0;
         for (uint256 i = 0; i < count; ) {
-            totalStake += evaluators[activeEvaluators[i]].stakedAmount;
+            // An evaluator passes the warmup filter when they have been continuously active
+            // for at least warmupPeriod. activeSince <= warmupThreshold ⟺
+            // block.timestamp >= activeSince + warmupPeriod.
+            if (evaluators[activeEvaluators[i]].activeSince <= warmupThreshold) {
+                totalStake += evaluators[activeEvaluators[i]].stakedAmount;
+            }
             unchecked { ++i; }
         }
+
+        // If no evaluator has passed the warmup period, the registry has no eligible candidates.
+        // This should be rare in steady state (7-day window) but can occur during bootstrapping
+        // or after a mass-slash event. The caller (fund()) should surface this revert to the user.
+        if (totalStake == 0) revert NoEligibleEvaluators();
 
         // Generate a pseudo-random point in [0, totalStake).
         // We use keccak256 rather than a simple modulo to avoid bias from small totalStake values.
@@ -258,20 +312,23 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
             )
         ) % totalStake;
 
-        // Walk the active evaluators array and find the evaluator whose cumulative
-        // stake window contains the random point (stake-weighted selection).
+        // Walk the active evaluators array and select the one whose cumulative warmed-up
+        // stake window contains the random point (stake-weighted selection, warmup-filtered).
         uint256 cumulative = 0;
         for (uint256 i = 0; i < count; ) {
-            cumulative += evaluators[activeEvaluators[i]].stakedAmount;
-            if (randomPoint < cumulative) {
-                assigned = activeEvaluators[i];
-                break;
+            // Skip evaluators still in their warmup period — same filter as above.
+            if (evaluators[activeEvaluators[i]].activeSince <= warmupThreshold) {
+                cumulative += evaluators[activeEvaluators[i]].stakedAmount;
+                if (randomPoint < cumulative) {
+                    assigned = activeEvaluators[i];
+                    break;
+                }
             }
             unchecked { ++i; }
         }
 
-        // assigned should always be set because randomPoint < totalStake,
-        // but we guard against any edge case to prevent returning address(0).
+        // assigned should always be set because randomPoint < totalStake and we only
+        // counted warmed-up stake, but we guard against edge cases to prevent address(0).
         if (assigned == address(0)) revert NoEligibleEvaluators();
 
         emit EvaluatorAssigned(jobId, assigned);
@@ -320,6 +377,26 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     function setJobManager(address _jobManager) external onlyOwner {
         if (_jobManager == address(0)) revert ZeroAddress("jobManager");
         jobManager = _jobManager;
+    }
+
+    /**
+     * @notice Updates the warmup period for new or re-staking evaluators.
+     * @dev The warmup period is how long an evaluator must remain above minEvaluatorStake
+     *      before they appear in assignEvaluator()'s weighted selection pool.
+     *      A higher value increases Sybil resistance at the cost of slower onboarding.
+     *      A lower value accelerates onboarding but reduces the economic friction of
+     *      creating multiple short-lived evaluator wallets.
+     *      Bounded by MAX_WARMUP_PERIOD (30 days) to ensure the registry cannot be
+     *      governance-locked into perpetually having zero eligible evaluators.
+     *      Note: changing the warmup period affects future assignments only. Evaluators
+     *      already past the old warmup threshold remain eligible; evaluators who were
+     *      previously ineligible under a longer period may become eligible under a shorter one.
+     * @param newPeriod New warmup duration in seconds. Maximum: 30 days (MAX_WARMUP_PERIOD).
+     */
+    function setWarmupPeriod(uint64 newPeriod) external onlyOwner {
+        if (newPeriod > MAX_WARMUP_PERIOD) revert WarmupPeriodTooLong(newPeriod, MAX_WARMUP_PERIOD);
+        warmupPeriod = newPeriod;
+        emit WarmupPeriodUpdated(newPeriod);
     }
 
     /**
