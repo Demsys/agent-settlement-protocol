@@ -2,7 +2,7 @@
 
 > **La première implémentation de référence d'ERC-8183** — une couche économique décentralisée qui apporte la confiance, le settlement trustless et la réputation on-chain à l'écosystème Google A2A.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL%201.1-blue.svg)](./LICENSE)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.24-blue)](https://soliditylang.org)
 [![Network](https://img.shields.io/badge/Network-Base%20Sepolia-blue)](https://sepolia.basescan.org)
 [![Standard](https://img.shields.io/badge/Standard-ERC--8183-purple)](https://eips.ethereum.org/EIPS/eip-8183)
@@ -589,7 +589,11 @@ Avant de soumettre une Pull Request, assurez-vous que tous les tests passent (`n
 
 ## Licence
 
-MIT License — voir [LICENSE](./LICENSE) pour les détails.
+**Business Source License 1.1** — voir [LICENSE](./LICENSE) pour les détails complets.
+
+Le code source est librement lisible et auditable. L'usage commercial est soumis à licence jusqu'au **23 mars 2030**, date à laquelle la licence bascule automatiquement en **MIT**.
+
+Usage non-commercial (recherche, éducation, projets personnels) : libre et sans restriction.
 
 ---
 
