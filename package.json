@@ -1,0 +1,30 @@
+{
+  "name": "agent-settlement-protocol",
+  "version": "1.0.0",
+  "description": "First reference implementation of ERC-8183 with decentralized evaluator network",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "coverage": "hardhat coverage",
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network base-sepolia"
+  },
+  "keywords": [
+    "erc-8183",
+    "ai-agents",
+    "defi",
+    "base"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.2",
+    "@types/node": "^25.5.0",
+    "dotenv": "^16.6.1",
+    "hardhat": "^2.28.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.6.1"
+  }
+}
