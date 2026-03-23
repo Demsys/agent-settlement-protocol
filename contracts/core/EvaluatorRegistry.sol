@@ -75,6 +75,11 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @notice Emitted when the owner updates the warmup period.
     event WarmupPeriodUpdated(uint64 newPeriod);
 
+    /// @notice Emitted when the owner updates the minimum evaluator stake threshold.
+    /// @dev Both old and new values are logged so indexers can track governance history
+    ///      and evaluators can react to deactivation caused by a raised minimum.
+    event MinEvaluatorStakeUpdated(uint256 oldMinimum, uint256 newMinimum);
+
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     /// @notice Thrown when a function is called by an address that is not the jobManager.
@@ -179,22 +184,17 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      *      before calling. Transfers tokens from caller to this contract.
      *      If the staker's total reaches minEvaluatorStake, they are added to
      *      the active evaluators list and become eligible for assignment.
-     *      Follows CEI: state updated before SafeERC20 transfer is impossible here
-     *      because we need the actual transferred amount — but since we use a known
-     *      ERC-20 (ProtocolToken, not fee-on-transfer), the amount is exact.
-     *      We perform the transfer first then update state, protected by ReentrancyGuard.
+     *      CEI is fully respected: since ProtocolToken has no fee-on-transfer logic,
+     *      the amount is exact and known upfront — state is updated BEFORE the transfer.
      * @param amount Number of ProtocolToken to stake (in wei, 18 decimals).
      */
     function stake(uint256 amount) external nonReentrant {
         // CHECKS
         if (amount == 0) revert ZeroAmount();
 
-        // INTERACTIONS (transfer first to ensure funds arrive before state update)
-        // Safe because ProtocolToken is our own contract with no fee-on-transfer logic.
-        // ReentrancyGuard prevents any reentrancy from this call.
-        protocolToken.safeTransferFrom(msg.sender, address(this), amount);
-
-        // EFFECTS
+        // EFFECTS — update state before the token transfer (CEI)
+        // ProtocolToken has no fee-on-transfer logic, so the received amount equals `amount`
+        // exactly. We can safely update state first without reading the post-transfer balance.
         Evaluator storage eval = evaluators[msg.sender];
         eval.stakedAmount += amount;
 
@@ -210,6 +210,9 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
             eval.activeSince = uint64(block.timestamp);
             activeEvaluators.push(msg.sender);
         }
+
+        // INTERACTIONS — transfer tokens into this contract after all state is finalized
+        protocolToken.safeTransferFrom(msg.sender, address(this), amount);
 
         emit Staked(msg.sender, amount, eval.stakedAmount);
     }
@@ -246,9 +249,13 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         if (eval.active && remaining < minEvaluatorStake) {
             // Deactivate: remove from the activeEvaluators array using swap-and-pop
             // to avoid leaving gaps and to keep the array dense.
-            _removeFromActive(msg.sender, eval.index);
-            eval.active = false;
-            eval.index = 0;
+            _removeFromActive(eval.index);
+            eval.active      = false;
+            eval.index       = 0;
+            // Reset activeSince to avoid leaving a stale "ghost" timestamp that could
+            // confuse future auditors or tooling into believing this evaluator is still
+            // in the warmup phase. A deactivated evaluator has no active period.
+            eval.activeSince = 0;
         }
 
         // INTERACTIONS — transfer tokens back to the caller
@@ -353,9 +360,12 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         eval.stakedAmount -= amount;
 
         if (eval.active && eval.stakedAmount < minEvaluatorStake) {
-            _removeFromActive(evaluator, eval.index);
-            eval.active = false;
-            eval.index = 0;
+            _removeFromActive(eval.index);
+            eval.active      = false;
+            eval.index       = 0;
+            // Reset activeSince: a slashed and deactivated evaluator has no active period.
+            // Leaving a stale timestamp would be a ghost value misleading future auditors.
+            eval.activeSince = 0;
         }
 
         // INTERACTIONS — burn the slashed tokens permanently
@@ -408,6 +418,11 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      */
     function setMinEvaluatorStake(uint256 newMinimum) external onlyOwner {
         if (newMinimum == 0) revert ZeroAmount();
+
+        // Capture the old value before overwriting so we can emit it in the event.
+        // Emitting before the write would also work, but capturing is clearer and avoids
+        // any ambiguity about which value is "old" if this function is ever extended.
+        uint256 oldMinimum = minEvaluatorStake;
         minEvaluatorStake = newMinimum;
 
         // Re-evaluate eligibility for all registered evaluators when the minimum changes.
@@ -421,14 +436,19 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
             Evaluator storage eval = evaluators[addr];
             if (eval.stakedAmount < newMinimum) {
                 // Deactivate — swap with last element and pop
-                _removeFromActive(addr, i);
-                eval.active = false;
-                eval.index = 0;
+                _removeFromActive(i);
+                eval.active      = false;
+                eval.index       = 0;
+                // Reset activeSince: deactivated evaluator has no active period.
+                // Avoids leaving a stale ghost timestamp for future auditors.
+                eval.activeSince = 0;
                 // Do not increment i — the swapped element now occupies index i.
             } else {
                 unchecked { ++i; }
             }
         }
+
+        emit MinEvaluatorStakeUpdated(oldMinimum, newMinimum);
     }
 
     // ─── View functions ───────────────────────────────────────────────────────
@@ -465,11 +485,11 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      * @notice Removes an evaluator from the activeEvaluators array using swap-and-pop.
      * @dev This is the standard O(1) pattern for array removal without gaps.
      *      The last element is moved to fill the removed slot, then the array is shrunk.
-     *      The caller is responsible for updating the moved evaluator's index in storage.
-     * @param evaluator The evaluator address to remove.
-     * @param index     The current index of the evaluator in activeEvaluators.
+     *      The caller is responsible for updating the removed evaluator's active, index,
+     *      and activeSince fields in storage after this call returns.
+     * @param index The current index of the evaluator to remove in activeEvaluators.
      */
-    function _removeFromActive(address evaluator, uint256 index) internal {
+    function _removeFromActive(uint256 index) internal {
         uint256 lastIndex = activeEvaluators.length - 1;
 
         if (index != lastIndex) {
@@ -482,10 +502,5 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
         // Remove the last element (now a duplicate) and shrink the array.
         activeEvaluators.pop();
-
-        // Suppress the unused variable warning for evaluator — we use it conceptually
-        // to document intent, but the actual removal is index-based.
-        // slither-disable-next-line unused-variable
-        evaluator; // used by callers to update eval.active and eval.index
     }
 }
