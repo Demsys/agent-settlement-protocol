@@ -125,6 +125,23 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      */
     event ReputationBridgeUpdated(address indexed newBridge);
 
+    /**
+     * @notice Emitted when a Client extends the deadline of a Funded or Submitted job.
+     * @dev Both old and new deadlines are logged so indexers can track the full history.
+     */
+    event DeadlineExtended(uint256 indexed jobId, uint64 oldDeadline, uint64 newDeadline);
+
+    /**
+     * @notice Emitted when a Client reopens a Rejected job for a new execution attempt.
+     * @dev The new provider may differ from the original one.
+     */
+    event JobReopened(
+        uint256 indexed jobId,
+        address indexed client,
+        address indexed newProvider,
+        uint64  newDeadline
+    );
+
     // ─── Errors not in interface (implementation-specific) ───────────────────
 
     /// @notice Thrown when the fee rate exceeds MAX_FEE_RATE.
@@ -141,6 +158,16 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /// @notice Thrown when deliverable hash is zero (not allowed in submit).
     error ZeroDeliverable(uint256 jobId);
+
+    /// @notice Thrown when extendDeadline() is called with a newDeadline <= current deadline.
+    /// @param current  The job's existing deadline.
+    /// @param proposed The proposed new deadline that is not strictly greater.
+    error DeadlineNotExtended(uint64 current, uint64 proposed);
+
+    /// @notice Thrown when extendDeadline() proposes a deadline beyond block.timestamp + 30 days.
+    /// @param proposed The proposed deadline that exceeds the maximum.
+    /// @param maximum  The computed maximum allowed deadline (block.timestamp + 30 days).
+    error DeadlineTooFar(uint64 proposed, uint64 maximum);
 
     // ─── Modifiers ────────────────────────────────────────────────────────────
 
@@ -557,6 +584,152 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         IERC20(token).safeTransfer(msg.sender, amount);
 
         emit RefundClaimed(msg.sender, token, amount);
+    }
+
+    // ─── Extension functions (beyond ERC-8183 core) ──────────────────────────
+
+    /**
+     * @notice Extends the deadline of a Funded or Submitted job.
+     * @dev Only the Client may extend the deadline. The extension must be strictly
+     *      forward (newDeadline > current deadline) and capped at block.timestamp + 30 days
+     *      to prevent indefinite escrow lock-up.
+     *      The minimum offset guard (MIN_DEADLINE_OFFSET = 5 minutes) ensures the new
+     *      deadline is meaningfully in the future even if called at the last moment.
+     *
+     *      Why only Funded/Submitted and not Open:
+     *        - Open jobs have no funds at stake; the Client can simply recreate the job
+     *          with a new deadline. Allowing extension on Open would add complexity
+     *          with no security or UX benefit.
+     *      Why not Completed/Rejected/Expired:
+     *        - Terminal states. The lifecycle is over; no extension makes sense.
+     *
+     *      CEI compliance: this function modifies only the job's deadline field (a pure
+     *      state update with no token transfers), so no nonReentrant guard is needed.
+     *      ReentrancyGuard is kept on fund-moving functions only to avoid wasting gas.
+     * @param jobId       The job whose deadline to extend.
+     * @param newDeadline New Unix timestamp deadline. Must be > job.deadline,
+     *                    >= block.timestamp + MIN_DEADLINE_OFFSET, and
+     *                    <= block.timestamp + 30 days.
+     */
+    function extendDeadline(uint256 jobId, uint64 newDeadline) external jobMustExist(jobId) {
+        // CHECKS
+        Job storage job = jobs[jobId];
+
+        // Only Funded or Submitted jobs have active escrow worth protecting.
+        if (job.status != JobStatus.Funded && job.status != JobStatus.Submitted) {
+            revert InvalidJobStatus(jobId, job.status);
+        }
+
+        // Only the Client can extend — they are the escrow payer and the beneficiary
+        // of a deadline extension (more time for their task to be completed).
+        if (msg.sender != job.client) revert NotAuthorized(msg.sender, jobId, "client");
+
+        uint64 currentDeadline = job.deadline;
+
+        // Must be strictly forward — never allow shortening a deadline.
+        // A reduced deadline could surprise the Provider and trigger premature expiration.
+        if (newDeadline <= currentDeadline) revert DeadlineNotExtended(currentDeadline, newDeadline);
+
+        // Must be at least MIN_DEADLINE_OFFSET in the future (5 minutes) so the extension
+        // is meaningful and not trivially bypassed by a same-block expiration.
+        if (newDeadline < uint64(block.timestamp) + MIN_DEADLINE_OFFSET) {
+            revert DeadlineTooSoon(newDeadline, uint64(block.timestamp) + MIN_DEADLINE_OFFSET);
+        }
+
+        // Cap at 30 days from now to prevent indefinite escrow lock-up.
+        // An uncapped extension would let a malicious Client trap the Provider's
+        // expected payment for an arbitrarily long period.
+        uint64 maxDeadline = uint64(block.timestamp) + 30 days;
+        if (newDeadline > maxDeadline) revert DeadlineTooFar(newDeadline, maxDeadline);
+
+        // EFFECTS — pure state update, no token transfer
+        job.deadline = newDeadline;
+
+        emit DeadlineExtended(jobId, currentDeadline, newDeadline);
+    }
+
+    /**
+     * @notice Reopens a Rejected job for a new execution attempt without losing the setup.
+     * @dev Feedback from ERC-8183 forum: jobs should be recoverable after rejection so
+     *      Clients do not need to recreate the full job (provider negotiation, token
+     *      approval, etc.) when they simply want to retry with a different Provider.
+     *
+     *      What reopen() does:
+     *        - Transitions status back to Open
+     *        - Replaces provider with newProvider (Client may choose the same or different)
+     *        - Resets deadline to newDeadline
+     *        - Resets evaluator to address(0) — will be reassigned by EvaluatorRegistry
+     *          at the next fund() call, ensuring a fresh unbiased evaluator
+     *        - Zeros budget, deliverable, and reason — the Client must call setBudget()
+     *          and fund() again before the Provider can submit
+     *
+     *      What reopen() does NOT do:
+     *        - It does NOT touch pendingRefunds. If the rejected job accumulated a refund
+     *          (budget was in escrow when rejected), that amount remains claimable via
+     *          claimRefund(). The Client must fund() the reopened job separately.
+     *          Conflating the refund with the new escrow would be a security anti-pattern:
+     *          the token addresses might differ, amounts might not match, and it would
+     *          create an implicit safeTransfer inside a non-nonReentrant function.
+     *
+     *      Why only Rejected and not Expired:
+     *        - Expired jobs represent a timed-out escrow where no deliverable was submitted.
+     *          The Client already has their refund pending. Reopening an Expired job is
+     *          identical to creating a new job — there is no setup worth preserving.
+     *
+     *      CEI compliance: no token transfers occur — this is a pure state reset.
+     *      No nonReentrant guard needed; added as defense-in-depth would be redundant.
+     * @param jobId       The rejected job to reopen.
+     * @param newProvider Address of the provider for the new attempt. Must differ from
+     *                    the Client (same rule as createJob). Cannot be address(0).
+     * @param newDeadline New deadline for the reopened job. Must be at least
+     *                    block.timestamp + MIN_DEADLINE_OFFSET (5 minutes).
+     */
+    function reopen(
+        uint256 jobId,
+        address newProvider,
+        uint64  newDeadline
+    ) external jobMustExist(jobId) {
+        // CHECKS
+        Job storage job = jobs[jobId];
+
+        // Only Rejected jobs can be reopened — the lifecycle ended but no funds are in escrow.
+        if (job.status != JobStatus.Rejected) revert InvalidJobStatus(jobId, job.status);
+
+        // Only the Client can reopen their own job.
+        if (msg.sender != job.client) revert NotAuthorized(msg.sender, jobId, "client");
+
+        // newProvider must be a real address.
+        if (newProvider == address(0)) revert ZeroAddress("newProvider");
+
+        // The Client cannot be their own Provider — same invariant as createJob.
+        if (newProvider == job.client) revert SelfAssignment("newProvider");
+
+        // New deadline must be sufficiently in the future.
+        if (newDeadline < uint64(block.timestamp) + MIN_DEADLINE_OFFSET) {
+            revert DeadlineTooSoon(newDeadline, uint64(block.timestamp) + MIN_DEADLINE_OFFSET);
+        }
+
+        // EFFECTS — reset the job back to Open state for a fresh funding cycle.
+        // Capture client address before any writes (not strictly necessary here since
+        // client is not modified, but consistent with the defensive read-before-write style).
+        address client = job.client;
+
+        job.status      = JobStatus.Open;
+        job.provider    = newProvider;
+        job.deadline    = newDeadline;
+        // Reset evaluator to address(0) so fund() triggers a fresh EvaluatorRegistry assignment.
+        // Reusing the old evaluator who just rejected the work would undermine the retry.
+        job.evaluator   = address(0);
+        // Budget must be re-negotiated and re-funded — the old escrow has already been
+        // credited to pendingRefunds and is independent of this reopened escrow cycle.
+        job.budget      = 0;
+        // Clear the previous deliverable and verdict so they do not pollute the new attempt.
+        job.deliverable = bytes32(0);
+        job.reason      = bytes32(0);
+        // createdAt is intentionally preserved — it reflects when the job was originally
+        // created, which is useful for off-chain reputation and analytics.
+
+        emit JobReopened(jobId, client, newProvider, newDeadline);
     }
 
     // ─── Admin functions ─────────────────────────────────────────────────────
