@@ -1,5 +1,3 @@
-# Créer le .gitignore
-cat > .gitignore << 'EOF'
 # Variables d'environnement — JAMAIS committer la clé privée du wallet
 .env
 .env.local
@@ -27,4 +25,9 @@ npm-debug.log*
 
 # IDE
 .vscode/settings.json
-EOF
+
+# SDK build output
+sdk/dist/
+
+# API local data — contains encrypted private keys of test agents
+api/data/

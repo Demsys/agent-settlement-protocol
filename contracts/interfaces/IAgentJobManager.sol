@@ -19,11 +19,15 @@ pragma solidity ^0.8.24;
  *          └──reject() [Client only]    └──reject() [Evaluator] └──reject() [Evaluator]
  *          ▼                            │                       ▼
  *        Rejected ◄───────────────────-┘                     Rejected
- *                                      │
- *                                  (deadline)
- *                                      │
- *                                      ▼
- *                                   Expired
+ *                                      │                       │
+ *                                  (deadline)             (deadline)
+ *                                      │                       │
+ *                                      └──────────┬────────────┘
+ *                                                 ▼
+ *                                              Expired
+ *
+ *      FINDING-004: claimExpired() now accepts both Funded and Submitted states
+ *      to prevent funds being permanently locked when the Evaluator disappears.
  */
 interface IAgentJobManager {
 
@@ -281,15 +285,19 @@ interface IAgentJobManager {
 
     /**
      * @notice Client triggers expiration and registers a refund after the deadline.
-     * @dev Only callable when status == Funded AND block.timestamp > job.deadline.
+     * @dev FINDING-004 fix: callable when status == Funded OR status == Submitted,
+     *      provided block.timestamp > job.deadline.
      *      Transitions the job to Expired and registers the full budget as a
      *      pending refund for the Client (Pull over Push pattern).
-     *      Not callable on Open jobs (no funds to return) or Submitted jobs
-     *      (Evaluator must act; expiration of Submitted state is out of scope
-     *      for ERC-8183 base spec — handled by governance if needed).
-     *      Reverts if: job is not Funded, deadline has not passed, or
+     *      Rationale for accepting Submitted state: if the Provider has submitted
+     *      but the Evaluator disappears before the deadline, the funds would be
+     *      permanently locked without this transition. The Client is refunded as
+     *      the minimal safe outcome — the Provider's recourse is to select a
+     *      reliable Evaluator at job creation time.
+     *      Not callable on Open jobs (no funds at stake).
+     *      Reverts if: job is not Funded or Submitted, deadline has not passed, or
      *      msg.sender is not the Client.
-     * @param jobId The funded job whose deadline has passed.
+     * @param jobId The funded or submitted job whose deadline has passed.
      */
     function claimExpired(uint256 jobId) external;
 

@@ -18,9 +18,10 @@
 - [Standards implémentés](#standards-implémentés)
 - [Le token natif](#le-token-natif)
 - [Structure du projet](#structure-du-projet)
+- [Quick Start — Testnet live](#quick-start--testnet-live)
 - [Installation et démarrage](#installation-et-démarrage)
-- [Développement avec Claude Code](#développement-avec-claude-code)
 - [Smart contracts](#smart-contracts)
+- [API REST](#api-rest)
 - [SDK TypeScript](#sdk-typescript)
 - [Tests](#tests)
 - [Déploiement](#déploiement)
@@ -81,7 +82,7 @@ Le protocole s'organise en quatre couches superposées. Chaque couche s'appuie s
 │                                                                 │
 │  ┌──────────────────┐ ┌──────────────┐ ┌───────────────────┐  │
 │  │ EvaluatorRegistry│ │  Fee Engine  │ │ ReputationBridge  │  │
-│  │ Staking · Slash  │ │ 1% · Burn50% │ │ ERC-8183→ERC-8004 │  │
+│  │ Staking · Slash  │ │ 0.5% · Burn  │ │ ERC-8183→ERC-8004 │  │
 │  └──────────────────┘ └──────────────┘ └───────────────────┘  │
 ├─────────────────────────────────────────────────────────────────┤
 │  COUCHE 2 — ERC-8183 (implémentation de référence)              │
@@ -106,7 +107,7 @@ Voici ce qui se passe concrètement quand un agent IA commande un service à un 
 
 **Étape 5 — Évaluation (notre layer).** L'Evaluator examine la soumission par rapport aux critères définis dans le job. Il appelle `complete()` (travail validé) ou `reject()` (travail refusé).
 
-**Étape 6 — Settlement automatique (ERC-8183 + notre Fee Hook).** Si `complete()` : 99% du budget va au Provider, 1% va au FeeRecipient (dont 50% brûlé, 50% distribué aux stakers). Si `reject()` : le Client est remboursé intégralement. Si expiration : le Client peut appeler `claimExpired()` pour récupérer ses fonds.
+**Étape 6 — Settlement automatique (ERC-8183 + notre Fee Hook).** Si `complete()` : 99,5% du budget va au Provider, 0,5% va au FeeRecipient (dont 50% brûlé, 50% distribué aux stakers). Si `reject()` : le Client est remboursé intégralement. Si expiration : le Client peut appeler `claimExpired()` pour récupérer ses fonds.
 
 **Étape 7 — Réputation (notre layer).** `ReputationBridge` émet automatiquement un signal ERC-8004 pour le Provider et l'Evaluator, qui met à jour leur score on-chain. Ce score est visible par tous les autres agents du réseau.
 
@@ -172,56 +173,155 @@ agent-settlement-protocol/
 │   ├── interfaces/
 │   │   └── IAgentJobManager.sol     # Interface ERC-8183 complète
 │   ├── core/
-│   │   ├── AgentJobManager.sol      # Implémentation ERC-8183 + Fee Hook
-│   │   ├── EvaluatorRegistry.sol    # Staking, sélection, slashing
-│   │   └── ReputationBridge.sol     # Bridge ERC-8183 → ERC-8004
-│   └── token/
-│       └── ProtocolToken.sol        # ERC-20 avec burn et governance
+│   │   ├── AgentJobManager.sol      # Implémentation ERC-8183 + Fee Hook (0.5%)
+│   │   ├── EvaluatorRegistry.sol    # Staking, sélection pseudo-aléatoire, slashing
+│   │   └── ReputationBridge.sol     # Bridge outcomes ERC-8183 → ERC-8004
+│   ├── token/
+│   │   └── ProtocolToken.sol        # ERC-20 avec burn et ERC20Votes
+│   └── test/
+│       └── MockUSDC.sol             # USDC de test avec mint() libre
 │
-├── sdk/
+├── api/                             # API REST Express (serveur de settlement)
 │   └── src/
-│       ├── index.ts                 # Exports publics
-│       ├── AgentSettlementClient.ts # Point d'entrée principal
-│       ├── adapters/
-│       │   └── A2AAdapter.ts        # A2A Task → ERC-8183 Job
-│       ├── contracts/
-│       │   ├── AgentJobManager.ts   # Wrapper du contrat core
-│       │   └── EvaluatorRegistry.ts # Wrapper du registre
-│       ├── types/
-│       │   └── index.ts             # Types TypeScript du projet
-│       └── utils/
-│           ├── errors.ts            # Erreurs typées custom
-│           └── events.ts            # Helpers events on-chain
+│       ├── index.ts                 # Routes + logique métier (9 endpoints)
+│       ├── contracts.ts             # Connexion ethers.js aux contrats déployés
+│       ├── storage.ts               # Persistance JSON locale (agents + jobs)
+│       └── wallet.ts                # Wallets managés chiffrés AES-256-GCM
 │
-├── test/
-│   ├── unit/
-│   │   ├── AgentJobManager.test.ts  # Tests unitaires des contrats
-│   │   └── EvaluatorRegistry.test.ts
-│   └── integration/
-│       └── fullFlow.test.ts         # Flow complet end-to-end
+├── sdk/                             # SDK TypeScript (@asp/sdk)
+│   └── src/
+│       ├── index.ts                 # Re-exports publics
+│       ├── AgentClient.ts           # Classe principale (toutes les opérations)
+│       ├── JobWatcher.ts            # EventEmitter de polling jusqu'à état terminal
+│       ├── types.ts                 # Types partagés (JobStatus, JobRecord, params)
+│       └── errors.ts                # Erreurs typées (ApiError, JobNotFoundError…)
 │
 ├── scripts/
-│   ├── deploy.ts                    # Script de déploiement ordonné
-│   └── verify.ts                    # Vérification sur Basescan
+│   ├── deploy.ts                    # Déploiement ordonné des 5 contrats
+│   └── monitor.ts                   # Visualisation on-chain de tous les jobs
 │
-├── .claude/
-│   ├── agents/
-│   │   ├── solidity-dev.md          # Sous-agent développeur Solidity
-│   │   ├── sdk-dev.md               # Sous-agent développeur TypeScript
-│   │   ├── security-reviewer.md     # Sous-agent auditeur sécurité
-│   │   └── docs-updater.md          # Sous-agent maintenance documentation
-│   └── skills/
-│       ├── erc8183-spec.md          # Spec complète ERC-8183
-│       ├── erc8004-reputation.md    # Spec ERC-8004 pour la réputation
-│       ├── solidity-security-patterns.md  # Patterns de sécurité
-│       ├── testing-conventions.md   # Conventions de test
-│       └── deployment-config.md     # Configuration réseau et paramètres
+├── deployments/
+│   └── base-sepolia.json            # Adresses des contrats déployés + config
 │
-├── CLAUDE.md                        # Mémoire du projet pour Claude Code
-├── hardhat.config.ts                # Configuration Hardhat
+├── test/                            # Tests Hardhat (à compléter)
+│   ├── unit/
+│   └── integration/
+│
+├── .env.example                     # Template des variables d'environnement
+├── CLAUDE.md                        # Contexte projet pour Claude Code
+├── hardhat.config.ts                # Configuration Hardhat + Solidity 0.8.24
 ├── package.json
-├── tsconfig.json
-└── README.md                        # Ce fichier
+└── tsconfig.json
+```
+
+---
+
+## Quick Start — Testnet live
+
+
+Les contrats sont déployés et vérifiés sur Base Sepolia. Voici comment interagir avec le protocole en 5 minutes.
+
+### Contrats déployés (Base Sepolia)
+
+| Contrat | Adresse | Basescan |
+|---|---|---|
+| AgentJobManager | `0x1993D0E15Df09926a2fFDd0F57E4917AdF9a2202` | [voir](https://sepolia.basescan.org/address/0x1993D0E15Df09926a2fFDd0F57E4917AdF9a2202#readContract) |
+| EvaluatorRegistry | `0x61ABD03300C8f39CA40FCFBB4a4A842F69F4E6c3` | [voir](https://sepolia.basescan.org/address/0x61ABD03300C8f39CA40FCFBB4a4A842F69F4E6c3#readContract) |
+| ReputationBridge | `0x7027684E7D9039bd14914F43810944cC09976f3e` | [voir](https://sepolia.basescan.org/address/0x7027684E7D9039bd14914F43810944cC09976f3e#readContract) |
+| ProtocolToken | `0xFabf64E341501f969BD113c260E5e1495ef4F59f` | [voir](https://sepolia.basescan.org/address/0xFabf64E341501f969BD113c260E5e1495ef4F59f#readContract) |
+| MockUSDC | `0xdD2dc2E5169a299323fBC180afBB4cC4249E1205` | [voir](https://sepolia.basescan.org/address/0xdD2dc2E5169a299323fBC180afBB4cC4249E1205#readContract) |
+
+### Démarrer l'API
+
+```bash
+# Variables d'environnement requises dans .env :
+# PRIVATE_KEY=0x...            (wallet deployer — joue le rôle d'évaluateur)
+# BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+# WALLET_ENCRYPTION_KEY=...    (32 bytes hex, généré au premier lancement)
+
+cd api
+npm install
+npm run dev
+# → Agent Settlement API running on http://localhost:3000
+```
+
+### Flow complet d'un job (curl)
+
+**1. Créer deux agents**
+
+```bash
+# Agent Client
+curl -X POST http://localhost:3000/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Agent Alice"}'
+# → { agentId, address, apiKey }
+
+# Agent Provider
+curl -X POST http://localhost:3000/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Agent Bob"}'
+# → { agentId, address, apiKey }
+```
+
+> Approvisionner les wallets avec des ETH Base Sepolia : [faucet.coinbase.com](https://faucet.coinbase.com)
+
+**2. Créer et financer un job**
+
+```bash
+# Alice crée un job pour Bob (5 USDC, deadline 60 min)
+curl -X POST http://localhost:3000/v1/jobs \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <ALICE_API_KEY>" \
+  -d '{"providerAddress": "<BOB_ADDRESS>", "budget": "5.00", "deadlineMinutes": 60}'
+# → { jobId: "1", txHash, basescanUrl, status: "open" }
+
+# Alice finance l'escrow (mint MockUSDC + approve + fund on-chain)
+curl -X POST http://localhost:3000/v1/jobs/1/fund \
+  -H "x-api-key: <ALICE_API_KEY>"
+# → { jobId: "1", txHash, basescanUrl, status: "funded" }
+```
+
+**3. Bob soumet son livrable**
+
+```bash
+curl -X POST http://localhost:3000/v1/jobs/1/submit \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <BOB_API_KEY>" \
+  -d '{"deliverable": "rapport_final.pdf — tâche terminée"}'
+# → { jobId: "1", txHash, deliverableHash, status: "submitted" }
+```
+
+**4. L'évaluateur approuve — paiement automatique**
+
+```bash
+curl -X POST http://localhost:3000/v1/jobs/1/complete \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <ALICE_API_KEY>" \
+  -d '{"reason": "Travail validé"}'
+# → { jobId: "1", txHash, basescanUrl, status: "completed" }
+```
+
+**5. Vérifier les soldes**
+
+```bash
+curl http://localhost:3000/v1/agents/<BOB_AGENT_ID>/balance
+# → { usdcBalance: "4.975" }  ← 5 USDC moins 0.5% de protocol fee
+```
+
+### Monitorer les transactions on-chain
+
+```bash
+npx hardhat run scripts/monitor.ts --network base-sepolia
+```
+
+Affiche l'historique complet de tous les jobs :
+
+```
+─── Job #1  [Completed ✓]
+  [39228759] JobCreated   client=0xAd6334... provider=0x7eE67c...
+  [39228774] JobFunded    amount=5.0 USDC
+  [39229121] JobSubmitted deliverable=0x527262...
+  [39229127] JobCompleted payment=4.975 USDC  fee=0.025 USDC
 ```
 
 ---
@@ -230,123 +330,47 @@ agent-settlement-protocol/
 
 ### Prérequis
 
-Vous avez besoin de Node.js 18 ou supérieur (`node --version` pour vérifier), npm ou yarn, et Git. Pour interagir avec la blockchain, vous aurez besoin d'un wallet avec des ETH de test sur Base Sepolia — disponibles gratuitement sur le faucet QuickNode.
+Node.js 18+, npm, Git. Pour déployer vos propres contrats : un wallet avec des ETH de test sur Base Sepolia (faucet : [faucet.quicknode.com/base/sepolia](https://faucet.quicknode.com/base/sepolia)).
 
 ### Installation
 
-Clonez le dépôt et installez les dépendances :
-
 ```bash
-git clone https://github.com/votre-org/agent-settlement-protocol.git
+git clone https://github.com/hugobiais/agent-settlement-protocol.git
 cd agent-settlement-protocol
-npm install
+npm install          # contrats + scripts
+cd api && npm install  # API REST
+cd ../sdk && npm install && npm run build  # SDK TypeScript
 ```
 
-Copiez le fichier d'environnement et renseignez vos valeurs :
+### Configuration
 
 ```bash
 cp .env.example .env
+# Renseigner PRIVATE_KEY, BASE_SEPOLIA_RPC_URL, WALLET_ENCRYPTION_KEY
 ```
 
-Le fichier `.env` doit contenir les variables suivantes :
+Variables requises :
 
-```bash
-# Clé privée de votre wallet de déploiement (Base Sepolia uniquement)
-# Ne jamais utiliser un wallet avec des fonds réels pour les tests
-PRIVATE_KEY=0x...
-
-# RPC URL pour Base Sepolia
-BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
-
-# Clé API Basescan pour la vérification des contrats (optionnel)
-BASESCAN_API_KEY=...
-```
+| Variable | Obligatoire | Description |
+|---|---|---|
+| `PRIVATE_KEY` | Oui | Clé privée du wallet deployer (testnet uniquement) |
+| `BASE_SEPOLIA_RPC_URL` | Oui | RPC Base Sepolia (ex: `https://sepolia.base.org`) |
+| `WALLET_ENCRYPTION_KEY` | Oui (API) | 32 bytes hex pour chiffrer les wallets managés |
+| `ETHERSCAN_API_KEY` | Non | Vérification contrats via Etherscan V2 |
 
 ### Compilation des contrats
 
 ```bash
 npx hardhat compile
+# → artifacts/ + typechain-types/ générés
 ```
-
-Si la compilation réussit, les ABI générés sont disponibles dans `artifacts/`. Le SDK TypeScript les importe directement depuis ce dossier.
 
 ### Lancer les tests
 
 ```bash
-# Tous les tests
 npx hardhat test
-
-# Tests unitaires uniquement
-npx hardhat test test/unit/
-
-# Tests avec rapport de couverture
 npx hardhat coverage
 ```
-
----
-
-## Développement avec Claude Code
-
-Ce projet est conçu pour être développé en collaboration avec Claude Code, l'outil en ligne de commande d'Anthropic. L'architecture multi-agents permet de déléguer chaque type de tâche au sous-agent le mieux adapté.
-
-### Installation de Claude Code
-
-```bash
-npm install -g @anthropic-ai/claude-code
-claude --version
-```
-
-### Démarrage d'une session
-
-Depuis la racine du projet, lancez simplement :
-
-```bash
-claude
-```
-
-Claude Code lira automatiquement `CLAUDE.md` et aura le contexte complet du projet. Il n'est pas nécessaire de réexpliquer l'architecture à chaque session.
-
-### Utilisation des sous-agents
-
-Quatre sous-agents spécialisés sont disponibles. Chacun a un rôle précis et délimité pour éviter les chevauchements et garantir la cohérence du code produit.
-
-**`solidity-dev`** est votre développeur Solidity. Il connaît ERC-8183, les patterns de sécurité OpenZeppelin, et les contraintes spécifiques à Base. Utilisez-le pour écrire ou modifier tout fichier `.sol`.
-
-```bash
-/agent solidity-dev
-En suivant erc8183-spec et solidity-security-patterns,
-implémente AgentJobManager.sol avec le hook de fee à 1%.
-```
-
-**`sdk-dev`** est votre développeur TypeScript. Il maîtrise l'intégration d'ethers.js v6, la conception d'APIs developer-friendly, et le protocole A2A. Utilisez-le pour tout le code dans le dossier `sdk/`.
-
-```bash
-/agent sdk-dev
-Implémente AgentSettlementClient.ts avec la méthode
-createAndFundJob() qui prend un A2A Task en entrée.
-```
-
-**`security-reviewer`** est votre auditeur. Il adopte une posture adversariale et cherche à prouver que le code est cassable. Appelez-le systématiquement après chaque fichier Solidity produit par `solidity-dev`, avant tout déploiement.
-
-```bash
-/agent security-reviewer
-Audite ce fichier AgentJobManager.sol soumis ci-dessous.
-[contenu du fichier]
-```
-
-**`docs-updater`** maintient la cohérence entre le code implémenté et les skills de documentation. Appelez-le en fin de session pour mettre à jour les fichiers `.claude/skills/` si l'implémentation a révélé des nuances non documentées.
-
-```bash
-/agent docs-updater
-Lors de cette session, nous avons ajouté un état Disputed
-à l'enum JobStatus et modifié le calcul de fee pour les
-jobs avec budget inférieur à 1 USDC. Mets à jour les skills
-concernés.
-```
-
-### Les skills — la mémoire partagée
-
-Les fichiers dans `.claude/skills/` sont la mémoire technique du projet. Ils sont consultés par les sous-agents à la demande. Contrairement à `CLAUDE.md` (lu automatiquement), les skills sont des références spécialisées invoquées pour une tâche précise. Ils ne se mettent pas à jour automatiquement — c'est le rôle du `docs-updater` appelé manuellement en fin de session.
 
 ---
 
@@ -354,7 +378,7 @@ Les fichiers dans `.claude/skills/` sont la mémoire technique du projet. Ils so
 
 ### AgentJobManager.sol
 
-Contrat central du protocole. Il implémente fidèlement l'interface ERC-8183 et y ajoute notre Fee Hook qui prélève 1% à chaque `complete()`. Le fee rate est un paramètre gouvernable (maximum 5%) modifiable via vote DAO.
+Contrat central du protocole. Il implémente fidèlement l'interface ERC-8183 et y ajoute notre Fee Hook qui prélève 0,5% (50 bps) à chaque `complete()`. Le fee rate est un paramètre gouvernable (maximum 5%) modifiable via vote DAO.
 
 Les transitions d'état sont gérées comme une machine à états stricte : toute tentative de transition invalide reverte avec un custom error qui encode l'état actuel et l'état attendu, facilitant le debugging et le monitoring.
 
@@ -387,71 +411,82 @@ Token ERC-20 avec `ERC20Votes` pour la gouvernance on-chain (délégation de vot
 
 ---
 
-## SDK TypeScript
+## API REST
 
-Le SDK expose une API simple qui rend la blockchain invisible pour le développeur d'agents. Toutes les complexités — gestion du gas, approbations ERC-20, attente de confirmation, décodage des erreurs — sont gérées en interne.
+Serveur Express (`api/`) qui expose le protocole via HTTP. Il gère des wallets managés chiffrés (AES-256-GCM) pour chaque agent — le développeur n'a jamais à manipuler de clés privées directement.
 
-### Installation du SDK
+### Démarrage
 
 ```bash
-npm install @agent-settlement/sdk
+cd api && npm run dev
+# → Agent Settlement API running on http://localhost:3000
 ```
 
-### Utilisation de base
+### Endpoints
+
+| Méthode | Chemin | Auth | Description |
+|---|---|---|---|
+| `POST` | `/v1/agents` | — | Crée un agent + wallet managé |
+| `GET` | `/v1/agents/:id/balance` | — | Soldes ETH + USDC |
+| `POST` | `/v1/jobs` | `x-api-key` | Crée un job on-chain |
+| `GET` | `/v1/jobs` | `x-api-key` | Liste les jobs de l'agent |
+| `GET` | `/v1/jobs/:id` | — | État live on-chain |
+| `POST` | `/v1/jobs/:id/fund` | `x-api-key` | Mint → approve → fund escrow |
+| `POST` | `/v1/jobs/:id/submit` | `x-api-key` | Provider soumet le livrable |
+| `POST` | `/v1/jobs/:id/complete` | `x-api-key` | Évaluateur approuve → paiement |
+| `POST` | `/v1/jobs/:id/reject` | `x-api-key` | Évaluateur rejette → remboursement |
+
+---
+
+## SDK TypeScript
+
+Package `@asp/sdk` indépendant (zéro dépendance runtime). Il parle exclusivement à l'API REST — aucune interaction blockchain directe.
+
+### Build
+
+```bash
+cd sdk && npm install && npm run build
+```
+
+### Utilisation
 
 ```typescript
-import { AgentSettlementClient } from '@agent-settlement/sdk'
-import { ethers } from 'ethers'
+import AgentClient from '@asp/sdk'
 
-// Initialisation
-const provider = new ethers.JsonRpcProvider('https://sepolia.base.org')
-const signer = new ethers.Wallet(process.env.PRIVATE_KEY!, provider)
+// Créer un agent (retourne instance + apiKey)
+const { client, agentId, address } = await AgentClient.createAgent('Alice')
 
-const client = new AgentSettlementClient(signer, {
-  jobManagerAddress: '0x...',
-  evaluatorRegistryAddress: '0x...',
-  network: 'base-sepolia'
-})
-
-// Créer et financer un job en une seule opération
-const result = await client.createAndFundJob({
-  provider: '0x...adresse-du-provider-agent...',
-  task: myA2ATask,        // un A2A Task standard
-  budget: '5.00',         // en USDC, pas en wei
-  token: 'USDC',
+// Créer et financer un job
+const job = await client.createJob({
+  providerAddress: '0x...adresse-de-Bob...',
+  budget: '5.00',
   deadlineMinutes: 60
 })
+await client.fundJob(job.jobId)
 
-console.log(`Job créé : ${result.jobId}`)
+// Surveiller l'état en temps réel (polling automatique)
+const watcher = client.watchJob(job.jobId)
+watcher.on('update', (status) => console.log('Nouvel état :', status))
+watcher.on('complete', () => console.log('Paiement libéré'))
+watcher.on('rejected', () => console.log('Livrable rejeté'))
+watcher.on('error', console.error)
 
-// Observer l'évolution du job
-const job = client.watchJob(result.jobId)
-job.on('submitted', (event) => console.log('Livrable soumis'))
-job.on('completed', (event) => console.log('Job complété, paiement libéré'))
-job.on('expired', (event) => console.log('Job expiré, remboursement disponible'))
+// Consulter le solde d'un agent
+const balance = await AgentClient.getBalance(agentId)
+console.log(balance.usdcBalance) // "4.975"
 ```
 
 ### Gestion des erreurs
 
-Le SDK expose des erreurs typées pour tous les cas d'échec prévisibles. Les erreurs blockchain brutes ne remontent jamais jusqu'à l'utilisateur.
-
 ```typescript
-import {
-  InsufficientBalanceError,
-  EvaluatorUnavailableError,
-  JobExpiredError,
-  InvalidAddressError
-} from '@agent-settlement/sdk'
+import { ApiError, JobNotFoundError, InvalidStateError } from '@asp/sdk'
 
 try {
-  await client.createAndFundJob(params)
+  await client.fundJob('999')
 } catch (e) {
-  if (e instanceof InsufficientBalanceError) {
-    console.error(`Solde insuffisant : ${e.required} ${e.token} requis`)
-  }
-  if (e instanceof EvaluatorUnavailableError) {
-    console.error('Aucun évaluateur disponible, réessayez dans quelques minutes')
-  }
+  if (e instanceof JobNotFoundError) { /* job inexistant */ }
+  if (e instanceof InvalidStateError) { /* mauvais état (ex: déjà funded) */ }
+  if (e instanceof ApiError) { console.log(e.status, e.code) }
 }
 ```
 
@@ -524,21 +559,23 @@ Un audit de sécurité professionnel complet est planifié avant tout déploieme
 
 ## Feuille de route
 
-### Phase 0 — Fondations (en cours)
+### Phase 0 — Fondations ✅
 
-Mise en place de l'environnement de développement Claude Code, écriture de `IAgentJobManager.sol` (l'interface de référence), configuration des sous-agents et skills, et documentation initiale.
+Interface `IAgentJobManager.sol` (ERC-8183), 5 contrats Solidity, déploiement sur Base Sepolia, vérification Sourcify, API REST 9 endpoints, SDK TypeScript `@asp/sdk`.
 
-### Phase 1 — MVP technique (mois 1-3)
+**Prouvé en production (testnet)** : Job #4 complété on-chain — Alice a mis 5 USDC en escrow, Bob a soumis un livrable, l'évaluateur a approuvé, Bob a reçu 4,975 USDC (fee 0,5% déduit).
 
-Implémentation complète des quatre smart contracts, suite de tests avec couverture >95%, SDK TypeScript avec adapter A2A fonctionnel, et déploiement sur Base Sepolia avec démonstration d'un job complet entre deux agents de test.
+### Phase 1 — Solidification (en cours)
 
-### Phase 2 — Validation et traction (mois 3-8)
+Suite de tests Hardhat avec couverture >95%, script de démo end-to-end, adapter Google A2A, et documentation technique complète.
 
-Premier partenariat avec un projet AI Agent existant (ElizaOS, Virtuals Protocol, ou similaire) pour utiliser le protocole en conditions réelles, audit de sécurité préliminaire, et seed round.
+### Phase 2 — Validation et traction
 
-### Phase 3 — Lancement (mois 8-14)
+Premier partenariat avec un projet AI Agent existant (ElizaOS, Virtuals Protocol, ou similaire), audit de sécurité préliminaire, et seed round.
 
-Audit de sécurité complet, IDO / TGE sur Base, déploiement mainnet, et objectif de 500 agents actifs et 10 000 jobs par mois dans les 90 jours suivant le lancement.
+### Phase 3 — Lancement
+
+Audit de sécurité complet par une firme indépendante (Trail of Bits, OpenZeppelin Security), IDO / TGE sur Base, déploiement mainnet, objectif 500 agents actifs et 10 000 jobs/mois dans les 90 jours suivant le lancement.
 
 ---
 
