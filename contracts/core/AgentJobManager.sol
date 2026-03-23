@@ -169,6 +169,13 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @param maximum  The computed maximum allowed deadline (block.timestamp + 30 days).
     error DeadlineTooFar(uint64 proposed, uint64 maximum);
 
+    /// @notice Thrown when reject() is called by the Evaluator after the job's deadline
+    ///         has already passed. Once expired, only claimExpired() is valid.
+    /// @dev Distinct from DeadlinePassed (used in submit()) to clearly separate the two
+    ///      contexts: a provider missing the submission window vs. an evaluator attempting
+    ///      to inflict a negative reputation signal after the escrow window has closed.
+    error DeadlineAlreadyPassed(uint256 jobId);
+
     // ─── Modifiers ────────────────────────────────────────────────────────────
 
     /**
@@ -256,7 +263,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
         // EFFECTS — assign ID and create the job record
         jobId = nextJobId;
-        unchecked { ++nextJobId; }
+        unchecked { ++nextJobId; } // safe: 2^256 jobs is computationally impossible
 
         jobs[jobId] = Job({
             client:      msg.sender,
@@ -401,7 +408,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // EFFECTS — update all state before any external call
         // Capture values before zeroing budget (storage reads are cheap post-Berlin).
         address provider   = job.provider;
-        address evaluator  = job.evaluator;
+        address evaluator  = job.evaluator; // captured for ReputationBridge call below
         address token      = job.token;
         uint256 budget     = job.budget;
 
@@ -467,6 +474,13 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         } else if (current == JobStatus.Funded || current == JobStatus.Submitted) {
             // Only the Evaluator can reject a Funded or Submitted job.
             if (msg.sender != job.evaluator) revert NotAuthorized(msg.sender, jobId, "evaluator");
+
+            // Prevent the Evaluator from rejecting after the deadline has passed.
+            // Once expired, the job can only be resolved via claimExpired(). Allowing
+            // a post-deadline rejection would let an Evaluator inflict a negative
+            // reputation signal on a Provider who was never actually evaluated within
+            // the agreed time window — an unjust outcome and a potential griefing vector.
+            if (block.timestamp > job.deadline) revert DeadlineAlreadyPassed(jobId);
         } else {
             // Any other state (Completed, Rejected, Expired) is an invalid transition.
             revert InvalidJobStatus(jobId, current);
@@ -589,14 +603,23 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     // ─── Extension functions (beyond ERC-8183 core) ──────────────────────────
 
     /**
-     * @notice Extends the deadline of a Funded or Submitted job.
+     * @notice Extends the deadline of a Funded job.
      * @dev Only the Client may extend the deadline. The extension must be strictly
      *      forward (newDeadline > current deadline) and capped at block.timestamp + 30 days
      *      to prevent indefinite escrow lock-up.
      *      The minimum offset guard (MIN_DEADLINE_OFFSET = 5 minutes) ensures the new
      *      deadline is meaningfully in the future even if called at the last moment.
      *
-     *      Why only Funded/Submitted and not Open:
+     *      Why only Funded and not Submitted:
+     *        - In the Submitted state the Provider has already delivered their work and the
+     *          Evaluator is in the process of reviewing it. Allowing the Client to extend
+     *          the deadline at this stage would let them repeatedly push back the Evaluator's
+     *          verdict window indefinitely, effectively trapping both the Provider's payment
+     *          and the Evaluator's obligation with no upper bound. Funded-only extension
+     *          is the safe restriction: the Provider still has time to deliver and may
+     *          legitimately need more of it, but once work is submitted the clock should
+     *          run to conclusion.
+     *      Why not Open:
      *        - Open jobs have no funds at stake; the Client can simply recreate the job
      *          with a new deadline. Allowing extension on Open would add complexity
      *          with no security or UX benefit.
@@ -615,8 +638,11 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // CHECKS
         Job storage job = jobs[jobId];
 
-        // Only Funded or Submitted jobs have active escrow worth protecting.
-        if (job.status != JobStatus.Funded && job.status != JobStatus.Submitted) {
+        // Only Funded jobs may have their deadline extended.
+        // Submitted jobs are excluded: a deliverable has been provided and the Evaluator
+        // is actively reviewing it. Allowing extensions at this stage would enable the
+        // Client to keep pushing back the resolution window indefinitely (FINDING-003).
+        if (job.status != JobStatus.Funded) {
             revert InvalidJobStatus(jobId, job.status);
         }
 
