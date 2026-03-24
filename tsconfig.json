@@ -18,6 +18,8 @@
     "node_modules",
     "artifacts",
     "cache",
-    "typechain-types"
+    "typechain-types",
+    "test",
+    "scripts"
   ]
 }
