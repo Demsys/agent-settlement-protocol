@@ -6,7 +6,8 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "coverage": "hardhat coverage",
-    "deploy:testnet": "hardhat run scripts/deploy.ts --network base-sepolia"
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network base-sepolia",
+    "demo": "hardhat run scripts/demo.ts --network base-sepolia"
   },
   "keywords": [
     "erc-8183",
