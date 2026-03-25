@@ -1,20 +1,37 @@
 {
   "name": "@asp/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the Agent Settlement Protocol (ERC-8183)",
+  "description": "TypeScript SDK for the Agent Settlement Protocol — ERC-8183 on Base",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Demsys/agent-settlement-protocol.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/Demsys/agent-settlement-protocol#readme",
+  "bugs": {
+    "url": "https://github.com/Demsys/agent-settlement-protocol/issues"
+  },
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "keywords": [
     "erc-8183",
     "ai-agents",
+    "agentic-commerce",
     "a2a",
     "settlement",
-    "base"
+    "base",
+    "blockchain",
+    "sdk"
   ],
   "license": "MIT",
   "devDependencies": {
@@ -23,5 +40,8 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
