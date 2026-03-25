@@ -28,6 +28,8 @@ import {
   JOB_STATUS_MAP,
   USDC_DECIMALS,
 } from './contracts'
+import { getStats } from './stats'
+import { getDashboardHtml } from './dashboard'
 
 // -------------------------------------------------------------------
 // App setup
@@ -645,6 +647,37 @@ app.get('/v1/agents/:id/balance', async (req: Request<{ id: string }>, res: Resp
     const message = err instanceof Error ? err.message : String(err)
     apiError(res, 500, 'BLOCKCHAIN_ERROR', message)
   }
+})
+
+// -------------------------------------------------------------------
+// GET /v1/stats
+// Aggregated protocol stats — no auth required, 30s server-side cache
+// -------------------------------------------------------------------
+
+app.get('/v1/stats', async (_req: Request, res: Response) => {
+  try {
+    const stats = await withTimeout(getStats(), 'stats on-chain reads')
+    res.json(stats)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    apiError(res, 500, 'STATS_ERROR', message)
+  }
+})
+
+// -------------------------------------------------------------------
+// GET /dashboard
+// Monitoring dashboard — self-contained HTML, no auth required
+// -------------------------------------------------------------------
+
+app.get('/dashboard', (req: Request, res: Response) => {
+  // Relax helmet's default CSP for this route only (inline scripts needed)
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline';",
+  )
+  const apiBase = `${req.protocol}://${req.get('host')}`
+  res.setHeader('Content-Type', 'text/html; charset=utf-8')
+  res.send(getDashboardHtml(apiBase))
 })
 
 // -------------------------------------------------------------------

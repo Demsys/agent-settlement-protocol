@@ -4,9 +4,11 @@ import * as fs from 'fs'
 
 // TypeChain-generated factories — typed wrappers around the ABI
 import { AgentJobManager__factory } from '../../typechain-types/factories/contracts/core/AgentJobManager.sol/AgentJobManager__factory'
+import { EvaluatorRegistry__factory } from '../../typechain-types/factories/contracts/core/EvaluatorRegistry__factory'
 import { MockUSDC__factory } from '../../typechain-types/factories/contracts/test/MockUSDC__factory'
 
 import type { AgentJobManager } from '../../typechain-types/contracts/core/AgentJobManager.sol/AgentJobManager'
+import type { EvaluatorRegistry } from '../../typechain-types/contracts/core/EvaluatorRegistry'
 import type { MockUSDC } from '../../typechain-types/contracts/test/MockUSDC'
 
 // -------------------------------------------------------------------
@@ -82,6 +84,13 @@ export function getMockUSDCWithSigner(signer: ethers.Signer): MockUSDC {
 export function getMockUSDCReadOnly(): MockUSDC {
   return MockUSDC__factory.connect(
     manifest.contracts.MockUSDC.address,
+    provider,
+  )
+}
+
+export function getEvaluatorRegistryReadOnly(): EvaluatorRegistry {
+  return EvaluatorRegistry__factory.connect(
+    manifest.contracts.EvaluatorRegistry.address,
     provider,
   )
 }
