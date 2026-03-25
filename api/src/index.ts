@@ -664,11 +664,11 @@ app.get('/health', (_req: Request, res: Response) => {
 })
 
 // -------------------------------------------------------------------
-// GET /v1/stats
-// Aggregated protocol stats — no auth required, 30s server-side cache
+// GET /dashboard/stats  (internal — used only by the dashboard UI)
+// Not part of the public v1 API; no API key required but undocumented.
 // -------------------------------------------------------------------
 
-app.get('/v1/stats', async (_req: Request, res: Response) => {
+app.get('/dashboard/stats', async (_req: Request, res: Response) => {
   try {
     const stats = await withTimeout(getStats(), 'stats on-chain reads')
     res.json(stats)
