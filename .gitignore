@@ -9,7 +9,7 @@ node_modules/
 # Artefacts de compilation Hardhat
 artifacts/
 cache/
-typechain-types/
+# typechain-types/ are committed so Railway/CI can build the API without running hardhat
 
 # Rapports de coverage
 coverage/
