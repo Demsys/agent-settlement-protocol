@@ -30,12 +30,12 @@ describe("ProtocolToken", function () {
   describe("Deployment", function () {
     it("has the correct name", async function () {
       const { token } = await loadFixture(deployTokenFixture);
-      expect(await token.name()).to.equal("Agent Settlement Protocol Token");
+      expect(await token.name()).to.equal("Verdict");
     });
 
     it("has the correct symbol", async function () {
       const { token } = await loadFixture(deployTokenFixture);
-      expect(await token.symbol()).to.equal("ASP");
+      expect(await token.symbol()).to.equal("VRT");
     });
 
     it("has 18 decimals", async function () {
