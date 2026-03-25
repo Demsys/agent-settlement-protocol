@@ -1,5 +1,5 @@
 [build]
-buildCommand = "cd api && npm ci && npm run build"
+buildCommand = "npm ci && npx hardhat compile && cd api && npm ci && npm run build"
 
 [deploy]
 startCommand = "cd api && node dist/index.js"
