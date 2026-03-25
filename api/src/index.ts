@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv'
 import * as path from 'path'
-dotenv.config({ path: path.join(__dirname, '../../.env') })
+dotenv.config({ path: path.join(process.cwd(), '..', '.env') })
 import express, { Request, Response, NextFunction } from 'express'
 import bodyParser from 'body-parser'
 import cors from 'cors'

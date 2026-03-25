@@ -31,7 +31,7 @@ export interface JobRecord {
 // File paths
 // -------------------------------------------------------------------
 
-const DATA_DIR = path.resolve(__dirname, '..', 'data')
+const DATA_DIR = path.resolve(process.cwd(), 'data')
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json')
 const JOBS_FILE = path.join(DATA_DIR, 'jobs.json')
 
