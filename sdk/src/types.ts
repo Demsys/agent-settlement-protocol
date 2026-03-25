@@ -87,6 +87,13 @@ export interface AgentClientOptions {
    * Defaults to http://localhost:3000
    */
   baseUrl?: string
+  /**
+   * Per-request timeout in milliseconds.
+   * If a request does not complete within this window it is aborted and a
+   * BlockchainError with code REQUEST_TIMEOUT is thrown.
+   * Defaults to 30 000 (30 seconds).
+   */
+  timeoutMs?: number
 }
 
 /** Parameters for createJob */
