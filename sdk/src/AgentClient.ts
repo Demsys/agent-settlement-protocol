@@ -16,6 +16,8 @@ import type {
 
 const DEFAULT_BASE_URL = 'http://localhost:3000'
 const DEFAULT_WATCH_INTERVAL_MS = 3_000
+/** Default per-request timeout in milliseconds (30 seconds). */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 // ---------------------------------------------------------------------------
 // Internal HTTP helper
@@ -35,9 +37,9 @@ interface ApiErrorBody {
 
 async function request<T>(
   url: string,
-  options: RequestInit & { apiKey?: string } = {},
+  options: RequestInit & { apiKey?: string; timeoutMs?: number } = {},
 ): Promise<T> {
-  const { apiKey, ...fetchOptions } = options
+  const { apiKey, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchOptions } = options
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -50,15 +52,28 @@ async function request<T>(
     headers['x-api-key'] = apiKey
   }
 
+  // AbortController lets us cancel the fetch after the timeout elapses.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
   let response: Response
   try {
-    response = await fetch(url, { ...fetchOptions, headers })
+    response = await fetch(url, { ...fetchOptions, headers, signal: controller.signal })
   } catch (networkErr) {
+    // AbortError means our timeout fired — surface a clear message.
+    if ((networkErr as Error).name === 'AbortError') {
+      throw new BlockchainError(
+        `Request to ${url} timed out after ${timeoutMs}ms`,
+        'REQUEST_TIMEOUT',
+      )
+    }
     // fetch() itself throws on DNS / connection failures (not on HTTP errors).
     throw new BlockchainError(
       `Network error contacting ASP API at ${url}: ${String(networkErr)}`,
       'NETWORK_ERROR',
     )
+  } finally {
+    clearTimeout(timer)
   }
 
   // Parse the body regardless of status — error bodies carry useful information.
@@ -104,11 +119,13 @@ async function request<T>(
 export class AgentClient {
   private readonly apiKey: string
   private readonly baseUrl: string
+  private readonly timeoutMs: number
 
   constructor(options: AgentClientOptions) {
     this.apiKey = options.apiKey
     // Strip trailing slash once so every path can safely be prefixed with '/'.
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '')
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   }
 
   // -------------------------------------------------------------------------
@@ -164,7 +181,7 @@ export class AgentClient {
    * @param params Job creation parameters. See CreateJobParams.
    */
   async createJob(params: CreateJobParams): Promise<JobResult> {
-    return request<JobResult>(`${this.baseUrl}/v1/jobs`, {
+    return this.req<JobResult>(`${this.baseUrl}/v1/jobs`, {
       method: 'POST',
       apiKey: this.apiKey,
       body: JSON.stringify({
@@ -181,7 +198,7 @@ export class AgentClient {
    * List all jobs associated with the authenticated agent.
    */
   async listJobs(): Promise<JobRecord[]> {
-    const response = await request<{ jobs: JobRecord[] }>(
+    const response = await this.req<{ jobs: JobRecord[] }>(
       `${this.baseUrl}/v1/jobs`,
       { apiKey: this.apiKey },
     )
@@ -196,7 +213,7 @@ export class AgentClient {
    * @param jobId The job ID returned from createJob.
    */
   async fundJob(jobId: string): Promise<JobResult> {
-    return request<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/fund`, {
+    return this.req<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/fund`, {
       method: 'POST',
       apiKey: this.apiKey,
     })
@@ -211,7 +228,7 @@ export class AgentClient {
    * @param deliverable The work result (URL, JSON string, IPFS CID, etc.).
    */
   async submitWork(jobId: string, deliverable: string): Promise<SubmitResult> {
-    return request<SubmitResult>(`${this.baseUrl}/v1/jobs/${jobId}/submit`, {
+    return this.req<SubmitResult>(`${this.baseUrl}/v1/jobs/${jobId}/submit`, {
       method: 'POST',
       apiKey: this.apiKey,
       body: JSON.stringify({ deliverable }),
@@ -226,7 +243,7 @@ export class AgentClient {
    * @param reason Optional human-readable reason stored off-chain.
    */
   async completeJob(jobId: string, reason?: string): Promise<JobResult> {
-    return request<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/complete`, {
+    return this.req<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/complete`, {
       method: 'POST',
       apiKey: this.apiKey,
       body: JSON.stringify({ ...(reason !== undefined && { reason }) }),
@@ -241,7 +258,7 @@ export class AgentClient {
    * @param reason Optional human-readable reason stored off-chain.
    */
   async rejectJob(jobId: string, reason?: string): Promise<JobResult> {
-    return request<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/reject`, {
+    return this.req<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/reject`, {
       method: 'POST',
       apiKey: this.apiKey,
       body: JSON.stringify({ ...(reason !== undefined && { reason }) }),
@@ -279,10 +296,18 @@ export class AgentClient {
   // -------------------------------------------------------------------------
 
   /**
+   * Thin wrapper around module-level `request()` that automatically injects
+   * this client's configured timeout so callers don't need to repeat it.
+   */
+  private req<T>(url: string, options: RequestInit & { apiKey?: string } = {}): Promise<T> {
+    return request<T>(url, { ...options, timeoutMs: this.timeoutMs })
+  }
+
+  /**
    * Fetch the current state of a single job by ID.
    * Used internally by JobWatcher. The endpoint is public (no API key needed).
    */
   private async getJobById(jobId: string): Promise<JobRecord> {
-    return request<JobRecord>(`${this.baseUrl}/v1/jobs/${jobId}`)
+    return this.req<JobRecord>(`${this.baseUrl}/v1/jobs/${jobId}`)
   }
 }

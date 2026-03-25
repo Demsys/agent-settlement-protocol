@@ -36,6 +36,12 @@ const AGENTS_FILE = path.join(DATA_DIR, 'agents.json')
 const JOBS_FILE = path.join(DATA_DIR, 'jobs.json')
 
 // -------------------------------------------------------------------
+// Ensure data directory exists (safe on fresh clone, idempotent)
+// -------------------------------------------------------------------
+
+fs.mkdirSync(DATA_DIR, { recursive: true })
+
+// -------------------------------------------------------------------
 // Generic helpers
 // -------------------------------------------------------------------
 
