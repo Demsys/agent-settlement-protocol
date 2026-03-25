@@ -60,8 +60,8 @@ contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessC
      *      AccessControl roles are granted explicitly after super constructors.
      */
     constructor()
-        ERC20("Agent Settlement Protocol Token", "ASP")
-        ERC20Permit("Agent Settlement Protocol Token")
+        ERC20("Verdict", "VRT")
+        ERC20Permit("Verdict")
         Ownable(msg.sender)
     {
         // Grant admin and minter roles to the deployer.
