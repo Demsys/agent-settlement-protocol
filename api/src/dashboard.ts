@@ -324,7 +324,7 @@ export function getDashboardHtml(apiBase: string): string {
 
   async function refresh() {
     try {
-      const r = await fetch(API_BASE + '/v1/stats')
+      const r = await fetch(API_BASE + '/dashboard/stats')
       if (!r.ok) throw new Error('HTTP ' + r.status)
       const d = await r.json()
       render(d)
