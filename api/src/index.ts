@@ -3,6 +3,7 @@ import * as path from 'path'
 dotenv.config({ path: path.join(__dirname, '../../.env') })
 import express, { Request, Response, NextFunction } from 'express'
 import bodyParser from 'body-parser'
+import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import * as crypto from 'crypto'
@@ -36,6 +37,10 @@ import { getDashboardHtml } from './dashboard'
 // -------------------------------------------------------------------
 
 const app = express()
+
+// CORS — open during testnet/developer-testing phase
+// Tighten to specific origins before production
+app.use(cors())
 
 // Security headers (XSS protection, content-type sniffing, etc.)
 app.use(helmet())
