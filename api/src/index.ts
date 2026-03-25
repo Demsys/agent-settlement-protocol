@@ -689,7 +689,9 @@ app.get('/dashboard', (req: Request, res: Response) => {
     'Content-Security-Policy',
     "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline';",
   )
-  const apiBase = `${req.protocol}://${req.get('host')}`
+  // Use a relative base so fetch() works regardless of protocol (avoids
+  // mixed-content errors when Railway terminates TLS at the proxy layer).
+  const apiBase = ''
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
   res.send(getDashboardHtml(apiBase))
 })
