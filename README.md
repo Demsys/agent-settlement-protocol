@@ -225,11 +225,11 @@ Les contrats sont déployés et vérifiés sur Base Sepolia. Voici comment inter
 
 | Contrat | Adresse | Basescan |
 |---|---|---|
-| AgentJobManager | `0x739362c2995a13dB684B57CC6BCF8Fb1FeDE4200` | [voir](https://sepolia.basescan.org/address/0x739362c2995a13dB684B57CC6BCF8Fb1FeDE4200#readContract) |
-| EvaluatorRegistry | `0x44919317f7FA0722b555dE43082661045eb20086` | [voir](https://sepolia.basescan.org/address/0x44919317f7FA0722b555dE43082661045eb20086#readContract) |
-| ReputationBridge | `0x195C1ec510703d874a1635f089BFf42f7fE5aE40` | [voir](https://sepolia.basescan.org/address/0x195C1ec510703d874a1635f089BFf42f7fE5aE40#readContract) |
-| ProtocolToken | `0x63C60385368f89C18E011F58c633F0C9C8C9902E` | [voir](https://sepolia.basescan.org/address/0x63C60385368f89C18E011F58c633F0C9C8C9902E#readContract) |
-| MockUSDC | `0x0f272a4ba4EDab053F856A40306f78150AF5b703` | [voir](https://sepolia.basescan.org/address/0x0f272a4ba4EDab053F856A40306f78150AF5b703#readContract) |
+| AgentJobManager | `0x64eC3AcEEc90D6a441a552fE862A2bc021e3AfF0` | [voir](https://sepolia.basescan.org/address/0x64eC3AcEEc90D6a441a552fE862A2bc021e3AfF0#readContract) |
+| EvaluatorRegistry | `0xDd8366490ff9EF270C120f131442ab7d2fe08daa` | [voir](https://sepolia.basescan.org/address/0xDd8366490ff9EF270C120f131442ab7d2fe08daa#readContract) |
+| ReputationBridge | `0xAe54F935CA5c9f26836aDC038a2DCB62f321b6e6` | [voir](https://sepolia.basescan.org/address/0xAe54F935CA5c9f26836aDC038a2DCB62f321b6e6#readContract) |
+| ProtocolToken (VRT) | `0xc2D1C7bC7ACCF842CA7627d8c873952Ff7AdC729` | [voir](https://sepolia.basescan.org/address/0xc2D1C7bC7ACCF842CA7627d8c873952Ff7AdC729#readContract) |
+| MockUSDC | `0x82b4721F98F5404063E8fC6A5F6A2DaaEce0Fb09` | [voir](https://sepolia.basescan.org/address/0x82b4721F98F5404063E8fC6A5F6A2DaaEce0Fb09#readContract) |
 
 ### Démarrer l'API
 
