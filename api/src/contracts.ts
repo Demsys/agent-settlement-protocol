@@ -28,7 +28,7 @@ interface DeploymentManifest {
   }
 }
 
-const MANIFEST_PATH = path.resolve(__dirname, '..', '..', 'deployments', 'base-sepolia.json')
+const MANIFEST_PATH = path.resolve(process.cwd(), '..', 'deployments', 'base-sepolia.json')
 
 function loadManifest(): DeploymentManifest {
   if (!fs.existsSync(MANIFEST_PATH)) {
