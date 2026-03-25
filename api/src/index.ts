@@ -141,7 +141,28 @@ function requireApiKey(req: Request, res: Response, next: NextFunction): void {
 // Creates a managed wallet for a new agent and returns its address
 // -------------------------------------------------------------------
 
-app.post('/v1/agents', (req: Request, res: Response) => {
+// Amount of ETH sent to each new agent wallet — enough for ~50 txs on Base
+const AGENT_SEED_ETH = ethers.parseEther('0.005')
+
+async function seedAgentWallet(agentAddress: string): Promise<void> {
+  const privateKey = process.env.PRIVATE_KEY
+  if (!privateKey) return
+  try {
+    const deployer = new ethers.Wallet(privateKey, provider)
+    const balance = await provider.getBalance(deployer.address)
+    if (balance < AGENT_SEED_ETH) {
+      console.warn(`Deployer balance too low to seed agent wallet ${agentAddress}`)
+      return
+    }
+    const tx = await deployer.sendTransaction({ to: agentAddress, value: AGENT_SEED_ETH })
+    await tx.wait(1)
+    console.log(`Seeded ${agentAddress} with ${ethers.formatEther(AGENT_SEED_ETH)} ETH`)
+  } catch (err) {
+    console.warn(`Failed to seed agent wallet ${agentAddress}:`, err)
+  }
+}
+
+app.post('/v1/agents', async (req: Request, res: Response) => {
   const { name } = req.body as { name?: unknown }
 
   if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -162,13 +183,13 @@ app.post('/v1/agents', (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   })
 
-  // NOTE: The managed wallet needs ETH on Base Sepolia to pay gas.
-  // Fund it manually from a faucet: https://faucet.quicknode.com/base/sepolia
+  // Auto-fund the new wallet from the deployer so it can pay gas immediately
+  await seedAgentWallet(wallet.address)
+
   res.status(201).json({
     agentId,
     address: wallet.address,
     apiKey,
-    note: 'Fund this address with Base Sepolia ETH to pay gas: https://faucet.quicknode.com/base/sepolia',
   })
 })
 
