@@ -3,6 +3,8 @@ import * as path from 'path'
 dotenv.config({ path: path.join(__dirname, '../../.env') })
 import express, { Request, Response, NextFunction } from 'express'
 import bodyParser from 'body-parser'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import * as crypto from 'crypto'
 import { ethers } from 'ethers'
 
@@ -32,9 +34,27 @@ import {
 // -------------------------------------------------------------------
 
 const app = express()
+
+// Security headers (XSS protection, content-type sniffing, etc.)
+app.use(helmet())
+
+// IP-based rate limiting — 120 requests / 15 min per IP
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.', code: 'RATE_LIMITED' },
+})
+app.use(limiter)
+
 app.use(bodyParser.json())
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
+
+// Blockchain call timeout — transactions that are not confirmed within this
+// window are considered failed (avoids hanging forever on a slow RPC node).
+const BLOCKCHAIN_TIMEOUT_MS = 60_000
 
 // -------------------------------------------------------------------
 // Helpers
@@ -46,6 +66,37 @@ function apiError(res: Response, status: number, code: string, message: string):
 
 function basescanTx(txHash: string): string {
   return `https://sepolia.basescan.org/tx/${txHash}`
+}
+
+// Wraps any promise with a hard timeout so blockchain calls never hang forever.
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Operation timed out after ${BLOCKCHAIN_TIMEOUT_MS / 1000}s: ${label}`)),
+        BLOCKCHAIN_TIMEOUT_MS,
+      )
+    ),
+  ])
+}
+
+// Polls getJob() until the job record is visible on the RPC node (post-createJob).
+// This replaces the fragile fixed sleep(2000) that was previously used.
+async function waitForJobOnChain(
+  jobManager: ReturnType<typeof getJobManagerReadOnly>,
+  jobId: bigint,
+  maxAttempts = 12,
+  delayMs    = 500,
+): Promise<void> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const job = await jobManager.getJob(jobId)
+      if (job.client !== ethers.ZeroAddress) return
+    } catch { /* not visible yet */ }
+    await new Promise((r) => setTimeout(r, delayMs))
+  }
+  throw new Error(`Job ${jobId} not found on-chain after ${maxAttempts} attempts`)
 }
 
 // Generates a random 32-byte API key as a hex string
@@ -179,7 +230,7 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
       deadlineTimestamp,
       { gasLimit: (gasEstimate * 120n) / 100n, nonce: nonce++ },
     )
-    const createReceipt = await createTx.wait(1)
+    const createReceipt = await withTimeout(createTx.wait(1), 'createJob confirmation')
     if (!createReceipt || createReceipt.status === 0) {
       apiError(res, 500, 'TX_FAILED', `createJob transaction failed: ${basescanTx(createTx.hash)}`)
       return
@@ -199,16 +250,16 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
 
     const onChainJobId: bigint = jobCreatedLog.args[0] as bigint
 
-    // Brief pause so the RPC node propagates the createJob confirmation before
-    // estimateGas for setBudget — avoids JobNotFound on nodes with lag.
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    // Wait until the job is visible on the RPC node before calling setBudget.
+    // This replaces a fixed sleep — the retry loop is more reliable on slow nodes.
+    await waitForJobOnChain(getJobManagerReadOnly(), onChainJobId)
 
     // Set the budget in a separate call as required by the ERC-8183 flow
     const setBudgetGas = await jobManager.setBudget.estimateGas(onChainJobId, budgetWei)
     const setBudgetTx = await jobManager.setBudget(onChainJobId, budgetWei, {
       gasLimit: (setBudgetGas * 120n) / 100n, nonce: nonce++,
     })
-    const setBudgetReceipt = await setBudgetTx.wait(1)
+    const setBudgetReceipt = await withTimeout(setBudgetTx.wait(1), 'setBudget confirmation')
     if (!setBudgetReceipt || setBudgetReceipt.status === 0) {
       apiError(res, 500, 'TX_FAILED', `setBudget transaction failed: ${basescanTx(setBudgetTx.hash)}`)
       return
@@ -278,7 +329,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
     const mintTx = await usdc.mint(agentAddress, budgetWei, {
       gasLimit: (mintGas * 120n) / 100n, nonce: nonce++,
     })
-    await mintTx.wait(1)
+    await withTimeout(mintTx.wait(1), 'mint confirmation')
 
     // Approve the maximum possible amount so the agent never needs a second approval
     // when creating more jobs with the same token — saves a transaction in the future
@@ -286,7 +337,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
     const approveTx = await usdc.approve(jobManagerAddress, ethers.MaxUint256, {
       gasLimit: (approveGas * 120n) / 100n, nonce: nonce++,
     })
-    await approveTx.wait(1)
+    await withTimeout(approveTx.wait(1), 'approve confirmation')
 
     // Call fund() — passes expectedBudget so the contract can validate nothing changed
     const onChainJobId = BigInt(id)
@@ -294,7 +345,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
     const fundTx = await jobManager.fund(onChainJobId, budgetWei, {
       gasLimit: (fundGas * 120n) / 100n, nonce: nonce++,
     })
-    const fundReceipt = await fundTx.wait(1)
+    const fundReceipt = await withTimeout(fundTx.wait(1), 'fund confirmation')
     if (!fundReceipt || fundReceipt.status === 0) {
       apiError(res, 500, 'TX_FAILED', `fund transaction failed: ${basescanTx(fundTx.hash)}`)
       return
@@ -358,7 +409,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
     const submitTx = await jobManager.submit(onChainJobId, deliverableHash, {
       gasLimit: (gasEstimate * 120n) / 100n, nonce,
     })
-    const submitReceipt = await submitTx.wait(1)
+    const submitReceipt = await withTimeout(submitTx.wait(1), 'submit confirmation')
     if (!submitReceipt || submitReceipt.status === 0) {
       apiError(res, 500, 'TX_FAILED', `submit transaction failed: ${basescanTx(submitTx.hash)}`)
       return
@@ -416,7 +467,8 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
     const jobManager = getJobManagerWithSigner(evaluatorSigner)
 
     const reasonStr = typeof reason === 'string' ? reason : ''
-    // The reason field is stored as bytes32 on-chain
+    const reasonTruncated = reasonStr.length > 31
+    // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
     const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
 
     const onChainJobId = BigInt(id)
@@ -425,7 +477,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
     const completeTx = await jobManager.complete(onChainJobId, reasonBytes, {
       gasLimit: (gasEstimate * 120n) / 100n, nonce,
     })
-    const completeReceipt = await completeTx.wait(1)
+    const completeReceipt = await withTimeout(completeTx.wait(1), 'complete confirmation')
     if (!completeReceipt || completeReceipt.status === 0) {
       apiError(res, 500, 'TX_FAILED', `complete transaction failed: ${basescanTx(completeTx.hash)}`)
       return
@@ -438,6 +490,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
       txHash: completeTx.hash,
       basescanUrl: basescanTx(completeTx.hash),
       status: 'completed',
+      ...(reasonTruncated && { warning: 'reason was truncated to 31 characters for on-chain storage' }),
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -531,6 +584,8 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req: Request<{ id: string 
     const jobManager = getJobManagerWithSigner(evaluatorSigner)
 
     const reasonStr = typeof reason === 'string' ? reason : ''
+    const reasonTruncated = reasonStr.length > 31
+    // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
     const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
 
     const onChainJobId = BigInt(id)
@@ -539,7 +594,7 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req: Request<{ id: string 
     const rejectTx = await jobManager.reject(onChainJobId, reasonBytes, {
       gasLimit: (gasEstimate * 120n) / 100n, nonce,
     })
-    const rejectReceipt = await rejectTx.wait(1)
+    const rejectReceipt = await withTimeout(rejectTx.wait(1), 'reject confirmation')
     if (!rejectReceipt || rejectReceipt.status === 0) {
       apiError(res, 500, 'TX_FAILED', `reject transaction failed: ${basescanTx(rejectTx.hash)}`)
       return
@@ -552,6 +607,7 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req: Request<{ id: string 
       txHash: rejectTx.hash,
       basescanUrl: basescanTx(rejectTx.hash),
       status: 'rejected',
+      ...(reasonTruncated && { warning: 'reason was truncated to 31 characters for on-chain storage' }),
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
