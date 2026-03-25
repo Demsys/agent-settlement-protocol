@@ -655,6 +655,15 @@ app.get('/v1/agents/:id/balance', async (req: Request<{ id: string }>, res: Resp
 })
 
 // -------------------------------------------------------------------
+// GET /health
+// Lightweight liveness probe for Railway healthchecks — no RPC calls
+// -------------------------------------------------------------------
+
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ ok: true })
+})
+
+// -------------------------------------------------------------------
 // GET /v1/stats
 // Aggregated protocol stats — no auth required, 30s server-side cache
 // -------------------------------------------------------------------
