@@ -58,7 +58,7 @@ export interface BalanceResult {
   usdcBalance: string
 }
 
-/** Response from POST /v1/jobs and POST /v1/jobs/:id/fund */
+/** Response from POST /v1/jobs and POST /v1/jobs/:id/reject (synchronous) */
 export interface JobResult {
   jobId: string
   txHash: string
@@ -66,12 +66,14 @@ export interface JobResult {
   status: JobStatus
 }
 
-/** Response from POST /v1/jobs/:id/submit */
-export interface SubmitResult {
+/**
+ * Response from POST /v1/jobs/:id/fund, /submit, /complete (HTTP 202 async).
+ * The transaction has been enqueued but not yet confirmed on-chain.
+ * Poll GET /v1/jobs/:id (or use watchJob) to track the final status.
+ */
+export interface AsyncJobResult {
   jobId: string
-  txHash: string
-  deliverableHash: string
-  status: JobStatus
+  status: 'processing'
 }
 
 // ---------------------------------------------------------------------------

@@ -2,12 +2,12 @@ import { JobWatcher } from './JobWatcher'
 import { ApiError, BlockchainError } from './errors'
 import type {
   AgentClientOptions,
+  AsyncJobResult,
   BalanceResult,
   CreateAgentResponse,
   CreateJobParams,
   JobRecord,
   JobResult,
-  SubmitResult,
 } from './types'
 
 // ---------------------------------------------------------------------------
@@ -212,8 +212,8 @@ export class AgentClient {
    *
    * @param jobId The job ID returned from createJob.
    */
-  async fundJob(jobId: string): Promise<JobResult> {
-    return this.req<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/fund`, {
+  async fundJob(jobId: string): Promise<AsyncJobResult> {
+    return this.req<AsyncJobResult>(`${this.baseUrl}/v1/jobs/${jobId}/fund`, {
       method: 'POST',
       apiKey: this.apiKey,
     })
@@ -227,8 +227,8 @@ export class AgentClient {
    * @param jobId       The job ID to submit work for.
    * @param deliverable The work result (URL, JSON string, IPFS CID, etc.).
    */
-  async submitWork(jobId: string, deliverable: string): Promise<SubmitResult> {
-    return this.req<SubmitResult>(`${this.baseUrl}/v1/jobs/${jobId}/submit`, {
+  async submitWork(jobId: string, deliverable: string): Promise<AsyncJobResult> {
+    return this.req<AsyncJobResult>(`${this.baseUrl}/v1/jobs/${jobId}/submit`, {
       method: 'POST',
       apiKey: this.apiKey,
       body: JSON.stringify({ deliverable }),
@@ -242,8 +242,8 @@ export class AgentClient {
    * @param jobId  The job ID to complete.
    * @param reason Optional human-readable reason stored off-chain.
    */
-  async completeJob(jobId: string, reason?: string): Promise<JobResult> {
-    return this.req<JobResult>(`${this.baseUrl}/v1/jobs/${jobId}/complete`, {
+  async completeJob(jobId: string, reason?: string): Promise<AsyncJobResult> {
+    return this.req<AsyncJobResult>(`${this.baseUrl}/v1/jobs/${jobId}/complete`, {
       method: 'POST',
       apiKey: this.apiKey,
       body: JSON.stringify({ ...(reason !== undefined && { reason }) }),
