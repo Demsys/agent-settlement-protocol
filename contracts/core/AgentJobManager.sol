@@ -80,6 +80,17 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice Minimum time between job creation and deadline.
     uint64 public constant MIN_DEADLINE_OFFSET = 5 minutes;
 
+    /// @notice Mandatory delay between a governance proposal and its execution.
+    /// @dev FINDING-005 (centralisation): a 2-day window lets stakeholders detect and
+    ///      react to malicious or mistaken governance changes before they take effect.
+    ///      Even if the owner key is compromised, an attacker cannot drain the protocol
+    ///      via a fee manipulation in less than 2 days — giving time for an emergency
+    ///      multisig rotation or a community response.
+    ///      Applies to: setFeeRate and setFeeRecipient.
+    ///      Does NOT apply to: setReputationBridge (no fund flow impact),
+    ///      allowToken/disallowToken (maintenance operations, not financial).
+    uint256 public constant GOVERNANCE_DELAY = 2 days;
+
     // ─── Immutables ───────────────────────────────────────────────────────────
 
     /// @notice The EvaluatorRegistry used to auto-assign evaluators.
@@ -90,11 +101,13 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /// @notice Current protocol fee rate in basis points. 100 = 1%.
     /// @dev Governed by the owner (DAO post-launch). Bounded by MAX_FEE_RATE.
+    ///      Changes go through a propose/execute pattern with GOVERNANCE_DELAY.
     uint256 public feeRate;
 
     /// @notice Address that receives the protocol fee on complete().
     /// @dev Validated non-zero at construction (FINDING-003). The ProtocolToken
     ///      then handles burn (50%) and staker distribution (50%).
+    ///      Changes go through a propose/execute pattern with GOVERNANCE_DELAY.
     address public feeRecipient;
 
     /// @notice Address of the ReputationBridge contract to notify on job settlement.
@@ -117,6 +130,28 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      to have refunds in multiple token types across different jobs.
     mapping(address => mapping(address => uint256)) private pendingRefunds;
 
+    // ─── Governance timelock state ────────────────────────────────────────────
+
+    /// @notice Pending governance changes keyed by a parameter identifier.
+    /// @dev The key is a keccak256 hash of the parameter name string (e.g. keccak256("feeRate")).
+    ///      This avoids collisions between different parameters without needing separate mappings.
+    ///      FINDING-005: only feeRate and feeRecipient are timelocked here; they are the only
+    ///      parameters whose change directly controls the flow of funds.
+    struct PendingChange {
+        bytes32 valueHash;    // keccak256(abi.encode(newValue)) — verified at execution time
+        uint256 executableAt; // Earliest timestamp at which the change may be executed
+    }
+
+    mapping(bytes32 => PendingChange) private pendingChanges;
+
+    // ─── Token whitelist state ─────────────────────────────────────────────────
+
+    /// @notice Tracks which ERC-20 tokens are allowed as job payment tokens.
+    /// @dev FINDING-007: fee-on-transfer tokens silently break the escrow invariant
+    ///      (job.budget > actual contract balance). The whitelist prevents any such token
+    ///      from entering the system. Only tokens explicitly approved by governance may be used.
+    mapping(address => bool) public allowedTokens;
+
     // ─── Events not in interface (implementation-specific) ───────────────────
 
     /**
@@ -124,6 +159,31 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      * @dev address(0) means reputation forwarding is disabled.
      */
     event ReputationBridgeUpdated(address indexed newBridge);
+
+    // ── Governance timelock events ────────────────────────────────────────────
+
+    /// @notice Emitted when a feeRate change is proposed, before the delay elapses.
+    event FeeRateProposed(uint256 newFeeRate, uint256 executableAt);
+
+    /// @notice Emitted when a pending feeRate change is executed after the delay.
+    event FeeRateUpdated(uint256 oldFeeRate, uint256 newFeeRate);
+
+    /// @notice Emitted when a feeRecipient change is proposed, before the delay elapses.
+    event FeeRecipientProposed(address indexed newFeeRecipient, uint256 executableAt);
+
+    /// @notice Emitted when a pending feeRecipient change is executed after the delay.
+    event FeeRecipientUpdated(address indexed oldFeeRecipient, address indexed newFeeRecipient);
+
+    /// @notice Emitted when any pending governance proposal is cancelled by the owner.
+    event ProposalCancelled(bytes32 indexed key);
+
+    // ── Token whitelist events ────────────────────────────────────────────────
+
+    /// @notice Emitted when a token is added to the payment whitelist.
+    event TokenAllowed(address indexed token);
+
+    /// @notice Emitted when a token is removed from the payment whitelist.
+    event TokenDisallowed(address indexed token);
 
     /**
      * @notice Emitted when a Client extends the deadline of a Funded or Submitted job.
@@ -146,6 +206,26 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /// @notice Thrown when the fee rate exceeds MAX_FEE_RATE.
     error FeeRateExceedsMaximum(uint256 provided, uint256 maximum);
+
+    // ── Governance timelock errors ────────────────────────────────────────────
+
+    /// @notice Thrown when execute*() is called but no proposal exists for that key.
+    error NoProposalPending(bytes32 key);
+
+    /// @notice Thrown when execute*() is called before the governance delay has elapsed.
+    /// @param executableAt The earliest timestamp at which execution is allowed.
+    error GovernanceDelayNotElapsed(uint256 executableAt);
+
+    /// @notice Thrown when the value passed to execute*() does not match the proposed value.
+    /// @dev Prevents a front-running attack where the owner submits a safe value, waits,
+    ///      then passes a different (malicious) value at execution time. The hash check
+    ///      binds the execute call to exactly the value that was proposed.
+    error ProposalValueMismatch();
+
+    // ── Token whitelist errors ────────────────────────────────────────────────
+
+    /// @notice Thrown when createJob() is called with a token not on the whitelist.
+    error TokenNotAllowed(address token);
 
     /// @notice Thrown when the budget has not been set (is 0) at fund() time.
     error BudgetNotSet(uint256 jobId);
@@ -195,17 +275,25 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      *      Requiring it at construction prevents the contract from being deployed
      *      in a state where complete() would revert with a non-obvious SafeERC20
      *      error, permanently trapping funds of Submitted jobs.
-     *      The setter setFeeRecipient() is kept for governance rotation, but
-     *      the initial value is always validated here.
-     * @param _evaluatorRegistry Address of the deployed EvaluatorRegistry contract.
-     * @param _feeRate           Initial fee rate in basis points (100 = 1%).
-     * @param _feeRecipient      Address that receives the protocol fee on complete().
-     *                           Must be non-zero. Typically the ProtocolToken address.
+     *      The timelocked setters (proposeFeeRate/executeFeeRate, proposeFeeRecipient/
+     *      executeFeeRecipient) are kept for governance rotation.
+     *
+     *      FINDING-007 fix: _initialAllowedTokens bootstraps the token whitelist at
+     *      deployment. Without this parameter, no token would be whitelisted at
+     *      construction and createJob() would immediately revert for every caller —
+     *      making the contract unusable before the owner calls allowToken() manually.
+     * @param _evaluatorRegistry      Address of the deployed EvaluatorRegistry contract.
+     * @param _feeRate                Initial fee rate in basis points (100 = 1%).
+     * @param _feeRecipient           Address that receives the protocol fee on complete().
+     *                                Must be non-zero. Typically the ProtocolToken address.
+     * @param _initialAllowedTokens   List of ERC-20 addresses to whitelist at deployment.
+     *                                Zero addresses in the array are silently skipped.
      */
     constructor(
-        address _evaluatorRegistry,
-        uint256 _feeRate,
-        address _feeRecipient
+        address   _evaluatorRegistry,
+        uint256   _feeRate,
+        address   _feeRecipient,
+        address[] memory _initialAllowedTokens
     ) Ownable(msg.sender) {
         if (_evaluatorRegistry == address(0)) revert ZeroAddress("evaluatorRegistry");
         if (_feeRate > MAX_FEE_RATE) revert FeeRateExceedsMaximum(_feeRate, MAX_FEE_RATE);
@@ -218,6 +306,17 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         feeRate = _feeRate;
         feeRecipient = _feeRecipient;
         nextJobId = 1; // Start at 1 so that jobId 0 is always "invalid"
+
+        // FINDING-007: whitelist the initial tokens provided at deployment.
+        // address(0) entries are silently skipped — they cannot be valid payment tokens
+        // and their presence would break safeTransferFrom in fund().
+        for (uint256 i = 0; i < _initialAllowedTokens.length; ) {
+            if (_initialAllowedTokens[i] != address(0)) {
+                allowedTokens[_initialAllowedTokens[i]] = true;
+                emit TokenAllowed(_initialAllowedTokens[i]);
+            }
+            unchecked { ++i; }
+        }
     }
 
     // ─── External functions (ERC-8183 core) ──────────────────────────────────
@@ -245,6 +344,11 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // CHECKS — validate all inputs before touching state
         if (provider == address(0)) revert ZeroAddress("provider");
         if (token == address(0)) revert ZeroAddress("token");
+
+        // FINDING-007: only whitelisted tokens may be used. Fee-on-transfer tokens
+        // silently break the escrow invariant (job.budget > actual contract balance)
+        // which would prevent complete() from transferring the full agreed amount.
+        if (!allowedTokens[token]) revert TokenNotAllowed(token);
 
         // The client (msg.sender) cannot be the provider — a party cannot pay itself.
         if (provider == msg.sender) revert SelfAssignment("provider");
@@ -760,30 +864,138 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     // ─── Admin functions ─────────────────────────────────────────────────────
 
+    // ── Governance timelock: feeRate ──────────────────────────────────────────
+
     /**
-     * @notice Updates the protocol fee rate. Only callable by the owner.
-     * @dev Fee rate is bounded by MAX_FEE_RATE (500 = 5%) to protect users.
-     *      Changes take effect immediately for all future complete() calls.
-     *      In-flight jobs (already Funded or Submitted) will use the new rate
-     *      when complete() is eventually called — this is acceptable because the
-     *      rate range is bounded and the change is a governed action.
-     * @param newFeeRate New fee rate in basis points.
+     * @notice Step 1 of 2 — proposes a new fee rate.  Actual update is delayed by GOVERNANCE_DELAY.
+     * @dev FINDING-005: replacing the immediate setFeeRate() with a two-step propose/execute
+     *      pattern prevents a compromised owner key from instantly changing the fee to 5%
+     *      and extracting value from all in-flight jobs. The 2-day window gives the community
+     *      time to observe the pending change and react (e.g., pause or rotate the owner key).
+     *      Calling proposeFeeRate() a second time before execution overwrites the previous
+     *      proposal — only the latest value and deadline are stored.
+     * @param newFeeRate Proposed fee rate in basis points. Bounded by MAX_FEE_RATE (5%).
      */
-    function setFeeRate(uint256 newFeeRate) external onlyOwner {
+    function proposeFeeRate(uint256 newFeeRate) external onlyOwner {
         if (newFeeRate > MAX_FEE_RATE) revert FeeRateExceedsMaximum(newFeeRate, MAX_FEE_RATE);
-        feeRate = newFeeRate;
+
+        bytes32 key = keccak256("feeRate");
+        uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
+        pendingChanges[key] = PendingChange({
+            valueHash:    keccak256(abi.encode(newFeeRate)),
+            executableAt: executableAt
+        });
+        emit FeeRateProposed(newFeeRate, executableAt);
     }
 
     /**
-     * @notice Sets the address that receives the protocol fee. Only callable by the owner.
-     * @dev The constructor already validates the initial value is non-zero (FINDING-003).
-     *      This setter allows governance rotation (e.g., upgrading the ProtocolToken)
-     *      while preserving the invariant that feeRecipient is always valid.
-     * @param newFeeRecipient The address to receive protocol fees. Must be non-zero.
+     * @notice Step 2 of 2 — executes a previously proposed fee rate change.
+     * @dev The caller must pass the same newFeeRate value that was proposed.
+     *      The hash check (valueHash == keccak256(abi.encode(newFeeRate))) ensures
+     *      the execution is bound to exactly the value that was publicly announced —
+     *      preventing a last-second substitution attack.
+     * @param newFeeRate Must match the value passed to the corresponding proposeFeeRate().
      */
-    function setFeeRecipient(address newFeeRecipient) external onlyOwner {
+    function executeFeeRate(uint256 newFeeRate) external onlyOwner {
+        bytes32 key = keccak256("feeRate");
+        PendingChange storage p = pendingChanges[key];
+
+        if (p.executableAt == 0) revert NoProposalPending(key);
+        if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
+        if (p.valueHash != keccak256(abi.encode(newFeeRate))) revert ProposalValueMismatch();
+
+        delete pendingChanges[key]; // CEI: clear before applying the change
+        uint256 oldFeeRate = feeRate;
+        feeRate = newFeeRate;
+        emit FeeRateUpdated(oldFeeRate, newFeeRate);
+    }
+
+    // ── Governance timelock: feeRecipient ─────────────────────────────────────
+
+    /**
+     * @notice Step 1 of 2 — proposes a new fee recipient.  Actual update is delayed by GOVERNANCE_DELAY.
+     * @dev FINDING-005: same rationale as proposeFeeRate. Changing the fee recipient is
+     *      a high-impact action: a malicious rotation would redirect all future protocol
+     *      revenue to an attacker-controlled address. The 2-day delay makes this visible
+     *      on-chain before it takes effect.
+     * @param newFeeRecipient Proposed address to receive protocol fees. Must be non-zero.
+     */
+    function proposeFeeRecipient(address newFeeRecipient) external onlyOwner {
         if (newFeeRecipient == address(0)) revert ZeroAddress("feeRecipient");
+
+        bytes32 key = keccak256("feeRecipient");
+        uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
+        pendingChanges[key] = PendingChange({
+            valueHash:    keccak256(abi.encode(newFeeRecipient)),
+            executableAt: executableAt
+        });
+        emit FeeRecipientProposed(newFeeRecipient, executableAt);
+    }
+
+    /**
+     * @notice Step 2 of 2 — executes a previously proposed fee recipient change.
+     * @dev The caller must pass the same newFeeRecipient that was proposed.
+     * @param newFeeRecipient Must match the value passed to the corresponding proposeFeeRecipient().
+     */
+    function executeFeeRecipient(address newFeeRecipient) external onlyOwner {
+        bytes32 key = keccak256("feeRecipient");
+        PendingChange storage p = pendingChanges[key];
+
+        if (p.executableAt == 0) revert NoProposalPending(key);
+        if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
+        if (p.valueHash != keccak256(abi.encode(newFeeRecipient))) revert ProposalValueMismatch();
+
+        delete pendingChanges[key]; // CEI: clear before applying the change
+        address oldFeeRecipient = feeRecipient;
         feeRecipient = newFeeRecipient;
+        emit FeeRecipientUpdated(oldFeeRecipient, newFeeRecipient);
+    }
+
+    // ── Governance: proposal cancellation ────────────────────────────────────
+
+    /**
+     * @notice Cancels any pending governance proposal identified by its key.
+     * @dev Useful when the owner wants to abandon a proposal before it executes
+     *      (e.g., after discovering an error in the proposed value).
+     *      The key is keccak256("<parameterName>"), e.g. keccak256("feeRate").
+     *      Cancelling a non-existent proposal is a no-op (no revert) to simplify
+     *      tooling — checking existence before cancellation is not required.
+     * @param key keccak256 identifier of the proposal to cancel.
+     */
+    function cancelProposal(bytes32 key) external onlyOwner {
+        delete pendingChanges[key];
+        emit ProposalCancelled(key);
+    }
+
+    // ── Token whitelist management ────────────────────────────────────────────
+
+    /**
+     * @notice Adds an ERC-20 token to the payment whitelist.
+     * @dev FINDING-007: deliberate maintenance operation, not timelocked.
+     *      Adding a token only expands what clients CAN use — it does not change
+     *      the behavior of any existing job. The operator-level risk is accepting a
+     *      bad token (fee-on-transfer, rebasing, pausable) — mitigated by the owner's
+     *      responsibility to audit tokens before whitelisting.
+     *      Disallowing a token IS more sensitive (would prevent new jobs for live tokens)
+     *      but still does not affect in-flight jobs (token is stored on the job struct).
+     * @param token ERC-20 token address to whitelist. Must be non-zero.
+     */
+    function allowToken(address token) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress("token");
+        allowedTokens[token] = true;
+        emit TokenAllowed(token);
+    }
+
+    /**
+     * @notice Removes an ERC-20 token from the payment whitelist.
+     * @dev Does NOT affect in-flight jobs — token is stored on the Job struct
+     *      and the whitelist is only checked in createJob(). A disallowed token
+     *      on an existing job will continue to work through its full lifecycle.
+     * @param token ERC-20 token address to remove from the whitelist.
+     */
+    function disallowToken(address token) external onlyOwner {
+        allowedTokens[token] = false;
+        emit TokenDisallowed(token);
     }
 
     /**

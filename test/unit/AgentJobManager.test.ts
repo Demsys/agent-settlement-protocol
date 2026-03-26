@@ -37,6 +37,8 @@ const JobStatus = {
  * Deploys the full contract stack in the correct order and wires them together.
  * Does NOT stake or warm up any evaluator — individual tests handle that.
  */
+const GOVERNANCE_DELAY = 2 * 24 * 3600; // 2 days in seconds — mirrors AgentJobManager.GOVERNANCE_DELAY
+
 async function deployFixture() {
   const [deployer, client, provider, evaluator, stranger] =
     await ethers.getSigners();
@@ -53,22 +55,29 @@ async function deployFixture() {
   )) as EvaluatorRegistry;
   await registry.waitForDeployment();
 
-  // 3. Deploy AgentJobManager — feeRecipient = deployer for simplicity
+  // 3. Deploy MockUSDC — must be deployed BEFORE AgentJobManager so its address
+  //    can be passed in _initialAllowedTokens (FINDING-007 whitelist fix).
+  const MockUSDCFactory = await ethers.getContractFactory("MockUSDC");
+  const usdc = (await MockUSDCFactory.deploy()) as MockUSDC;
+  await usdc.waitForDeployment();
+
+  // 4. Deploy AgentJobManager — feeRecipient = deployer for simplicity.
+  //    MockUSDC is whitelisted at construction (FINDING-007).
   const AgentJobManagerFactory = await ethers.getContractFactory("AgentJobManager");
   const manager = (await AgentJobManagerFactory.deploy(
     await registry.getAddress(),
     FEE_RATE,
-    deployer.address
+    deployer.address,
+    [await usdc.getAddress()]  // _initialAllowedTokens — FINDING-007
   )) as AgentJobManager;
   await manager.waitForDeployment();
 
-  // 4. Wire EvaluatorRegistry to know about the JobManager
-  await registry.setJobManager(await manager.getAddress());
-
-  // 5. Deploy MockUSDC
-  const MockUSDCFactory = await ethers.getContractFactory("MockUSDC");
-  const usdc = (await MockUSDCFactory.deploy()) as MockUSDC;
-  await usdc.waitForDeployment();
+  // 5. Wire EvaluatorRegistry to AgentJobManager using the propose/execute pattern
+  //    (FINDING-005 timelock). We advance time past GOVERNANCE_DELAY here so that
+  //    the rest of the tests start with a fully operational registry.
+  await registry.proposeJobManager(await manager.getAddress());
+  await time.increase(GOVERNANCE_DELAY + 1);
+  await registry.executeJobManager(await manager.getAddress());
 
   return { manager, registry, protocolToken, usdc, deployer, client, provider, evaluator, stranger };
 }
@@ -594,8 +603,10 @@ describe("AgentJobManager", function () {
       const { manager, usdc, client, provider, evaluator, deployer } =
         await loadFixture(deployFixture);
 
-      // Set feeRate to 0
-      await manager.connect(deployer).setFeeRate(0);
+      // Set feeRate to 0 using the two-step timelock pattern (FINDING-005).
+      await manager.connect(deployer).proposeFeeRate(0);
+      await time.increase(GOVERNANCE_DELAY + 1);
+      await manager.connect(deployer).executeFeeRate(0);
 
       await createExplicitJob(manager, client, provider.address, evaluator.address, await usdc.getAddress());
       await manager.connect(client).setBudget(1n, FIVE_USDC);

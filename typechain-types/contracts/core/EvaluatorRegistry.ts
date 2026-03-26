@@ -26,18 +26,22 @@ import type {
 export interface EvaluatorRegistryInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "GOVERNANCE_DELAY"
       | "MAX_WARMUP_PERIOD"
       | "assignEvaluator"
+      | "cancelProposal"
+      | "executeJobManager"
+      | "executeMinEvaluatorStake"
       | "getEvaluatorCount"
       | "getStake"
       | "isEligible"
       | "jobManager"
       | "minEvaluatorStake"
       | "owner"
+      | "proposeJobManager"
+      | "proposeMinEvaluatorStake"
       | "protocolToken"
       | "renounceOwnership"
-      | "setJobManager"
-      | "setMinEvaluatorStake"
       | "setWarmupPeriod"
       | "slash"
       | "stake"
@@ -50,19 +54,40 @@ export interface EvaluatorRegistryInterface extends Interface {
     nameOrSignatureOrTopic:
       | "EvaluatorAssigned"
       | "EvaluatorSlashed"
+      | "JobManagerProposed"
+      | "JobManagerUpdated"
       | "MinEvaluatorStakeUpdated"
+      | "MinStakeExecuted"
+      | "MinStakeProposed"
       | "OwnershipTransferred"
+      | "ProposalCancelled"
       | "Staked"
       | "Unstaked"
       | "WarmupPeriodUpdated"
   ): EventFragment;
 
   encodeFunctionData(
+    functionFragment: "GOVERNANCE_DELAY",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "MAX_WARMUP_PERIOD",
     values?: undefined
   ): string;
   encodeFunctionData(
     functionFragment: "assignEvaluator",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "cancelProposal",
+    values: [BytesLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "executeJobManager",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "executeMinEvaluatorStake",
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
@@ -87,20 +112,20 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
   encodeFunctionData(
+    functionFragment: "proposeJobManager",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "proposeMinEvaluatorStake",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
     functionFragment: "protocolToken",
     values?: undefined
   ): string;
   encodeFunctionData(
     functionFragment: "renounceOwnership",
     values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "setJobManager",
-    values: [AddressLike]
-  ): string;
-  encodeFunctionData(
-    functionFragment: "setMinEvaluatorStake",
-    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "setWarmupPeriod",
@@ -125,11 +150,27 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): string;
 
   decodeFunctionResult(
+    functionFragment: "GOVERNANCE_DELAY",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "MAX_WARMUP_PERIOD",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
     functionFragment: "assignEvaluator",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "cancelProposal",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "executeJobManager",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "executeMinEvaluatorStake",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -145,19 +186,19 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
   decodeFunctionResult(
+    functionFragment: "proposeJobManager",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "proposeMinEvaluatorStake",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "protocolToken",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "setJobManager",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "setMinEvaluatorStake",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -212,6 +253,38 @@ export namespace EvaluatorSlashedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace JobManagerProposedEvent {
+  export type InputTuple = [
+    newJobManager: AddressLike,
+    executableAt: BigNumberish
+  ];
+  export type OutputTuple = [newJobManager: string, executableAt: bigint];
+  export interface OutputObject {
+    newJobManager: string;
+    executableAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace JobManagerUpdatedEvent {
+  export type InputTuple = [
+    oldJobManager: AddressLike,
+    newJobManager: AddressLike
+  ];
+  export type OutputTuple = [oldJobManager: string, newJobManager: string];
+  export interface OutputObject {
+    oldJobManager: string;
+    newJobManager: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace MinEvaluatorStakeUpdatedEvent {
   export type InputTuple = [oldMinimum: BigNumberish, newMinimum: BigNumberish];
   export type OutputTuple = [oldMinimum: bigint, newMinimum: bigint];
@@ -225,12 +298,53 @@ export namespace MinEvaluatorStakeUpdatedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace MinStakeExecutedEvent {
+  export type InputTuple = [oldMinimum: BigNumberish, newMinimum: BigNumberish];
+  export type OutputTuple = [oldMinimum: bigint, newMinimum: bigint];
+  export interface OutputObject {
+    oldMinimum: bigint;
+    newMinimum: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace MinStakeProposedEvent {
+  export type InputTuple = [
+    newMinimum: BigNumberish,
+    executableAt: BigNumberish
+  ];
+  export type OutputTuple = [newMinimum: bigint, executableAt: bigint];
+  export interface OutputObject {
+    newMinimum: bigint;
+    executableAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace OwnershipTransferredEvent {
   export type InputTuple = [previousOwner: AddressLike, newOwner: AddressLike];
   export type OutputTuple = [previousOwner: string, newOwner: string];
   export interface OutputObject {
     previousOwner: string;
     newOwner: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace ProposalCancelledEvent {
+  export type InputTuple = [key: BytesLike];
+  export type OutputTuple = [key: string];
+  export interface OutputObject {
+    key: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -337,11 +451,27 @@ export interface EvaluatorRegistry extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
+  GOVERNANCE_DELAY: TypedContractMethod<[], [bigint], "view">;
+
   MAX_WARMUP_PERIOD: TypedContractMethod<[], [bigint], "view">;
 
   assignEvaluator: TypedContractMethod<
     [jobId: BigNumberish],
     [string],
+    "nonpayable"
+  >;
+
+  cancelProposal: TypedContractMethod<[key: BytesLike], [void], "nonpayable">;
+
+  executeJobManager: TypedContractMethod<
+    [_jobManager: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+
+  executeMinEvaluatorStake: TypedContractMethod<
+    [newMinimum: BigNumberish],
+    [void],
     "nonpayable"
   >;
 
@@ -357,21 +487,21 @@ export interface EvaluatorRegistry extends BaseContract {
 
   owner: TypedContractMethod<[], [string], "view">;
 
-  protocolToken: TypedContractMethod<[], [string], "view">;
-
-  renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
-
-  setJobManager: TypedContractMethod<
+  proposeJobManager: TypedContractMethod<
     [_jobManager: AddressLike],
     [void],
     "nonpayable"
   >;
 
-  setMinEvaluatorStake: TypedContractMethod<
+  proposeMinEvaluatorStake: TypedContractMethod<
     [newMinimum: BigNumberish],
     [void],
     "nonpayable"
   >;
+
+  protocolToken: TypedContractMethod<[], [string], "view">;
+
+  renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
 
   setWarmupPeriod: TypedContractMethod<
     [newPeriod: BigNumberish],
@@ -402,11 +532,23 @@ export interface EvaluatorRegistry extends BaseContract {
   ): T;
 
   getFunction(
+    nameOrSignature: "GOVERNANCE_DELAY"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "MAX_WARMUP_PERIOD"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "assignEvaluator"
   ): TypedContractMethod<[jobId: BigNumberish], [string], "nonpayable">;
+  getFunction(
+    nameOrSignature: "cancelProposal"
+  ): TypedContractMethod<[key: BytesLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "executeJobManager"
+  ): TypedContractMethod<[_jobManager: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "executeMinEvaluatorStake"
+  ): TypedContractMethod<[newMinimum: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "getEvaluatorCount"
   ): TypedContractMethod<[], [bigint], "view">;
@@ -426,17 +568,17 @@ export interface EvaluatorRegistry extends BaseContract {
     nameOrSignature: "owner"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
+    nameOrSignature: "proposeJobManager"
+  ): TypedContractMethod<[_jobManager: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "proposeMinEvaluatorStake"
+  ): TypedContractMethod<[newMinimum: BigNumberish], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "protocolToken"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "renounceOwnership"
   ): TypedContractMethod<[], [void], "nonpayable">;
-  getFunction(
-    nameOrSignature: "setJobManager"
-  ): TypedContractMethod<[_jobManager: AddressLike], [void], "nonpayable">;
-  getFunction(
-    nameOrSignature: "setMinEvaluatorStake"
-  ): TypedContractMethod<[newMinimum: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "setWarmupPeriod"
   ): TypedContractMethod<[newPeriod: BigNumberish], [void], "nonpayable">;
@@ -475,6 +617,20 @@ export interface EvaluatorRegistry extends BaseContract {
     EvaluatorSlashedEvent.OutputObject
   >;
   getEvent(
+    key: "JobManagerProposed"
+  ): TypedContractEvent<
+    JobManagerProposedEvent.InputTuple,
+    JobManagerProposedEvent.OutputTuple,
+    JobManagerProposedEvent.OutputObject
+  >;
+  getEvent(
+    key: "JobManagerUpdated"
+  ): TypedContractEvent<
+    JobManagerUpdatedEvent.InputTuple,
+    JobManagerUpdatedEvent.OutputTuple,
+    JobManagerUpdatedEvent.OutputObject
+  >;
+  getEvent(
     key: "MinEvaluatorStakeUpdated"
   ): TypedContractEvent<
     MinEvaluatorStakeUpdatedEvent.InputTuple,
@@ -482,11 +638,32 @@ export interface EvaluatorRegistry extends BaseContract {
     MinEvaluatorStakeUpdatedEvent.OutputObject
   >;
   getEvent(
+    key: "MinStakeExecuted"
+  ): TypedContractEvent<
+    MinStakeExecutedEvent.InputTuple,
+    MinStakeExecutedEvent.OutputTuple,
+    MinStakeExecutedEvent.OutputObject
+  >;
+  getEvent(
+    key: "MinStakeProposed"
+  ): TypedContractEvent<
+    MinStakeProposedEvent.InputTuple,
+    MinStakeProposedEvent.OutputTuple,
+    MinStakeProposedEvent.OutputObject
+  >;
+  getEvent(
     key: "OwnershipTransferred"
   ): TypedContractEvent<
     OwnershipTransferredEvent.InputTuple,
     OwnershipTransferredEvent.OutputTuple,
     OwnershipTransferredEvent.OutputObject
+  >;
+  getEvent(
+    key: "ProposalCancelled"
+  ): TypedContractEvent<
+    ProposalCancelledEvent.InputTuple,
+    ProposalCancelledEvent.OutputTuple,
+    ProposalCancelledEvent.OutputObject
   >;
   getEvent(
     key: "Staked"
@@ -533,6 +710,28 @@ export interface EvaluatorRegistry extends BaseContract {
       EvaluatorSlashedEvent.OutputObject
     >;
 
+    "JobManagerProposed(address,uint256)": TypedContractEvent<
+      JobManagerProposedEvent.InputTuple,
+      JobManagerProposedEvent.OutputTuple,
+      JobManagerProposedEvent.OutputObject
+    >;
+    JobManagerProposed: TypedContractEvent<
+      JobManagerProposedEvent.InputTuple,
+      JobManagerProposedEvent.OutputTuple,
+      JobManagerProposedEvent.OutputObject
+    >;
+
+    "JobManagerUpdated(address,address)": TypedContractEvent<
+      JobManagerUpdatedEvent.InputTuple,
+      JobManagerUpdatedEvent.OutputTuple,
+      JobManagerUpdatedEvent.OutputObject
+    >;
+    JobManagerUpdated: TypedContractEvent<
+      JobManagerUpdatedEvent.InputTuple,
+      JobManagerUpdatedEvent.OutputTuple,
+      JobManagerUpdatedEvent.OutputObject
+    >;
+
     "MinEvaluatorStakeUpdated(uint256,uint256)": TypedContractEvent<
       MinEvaluatorStakeUpdatedEvent.InputTuple,
       MinEvaluatorStakeUpdatedEvent.OutputTuple,
@@ -544,6 +743,28 @@ export interface EvaluatorRegistry extends BaseContract {
       MinEvaluatorStakeUpdatedEvent.OutputObject
     >;
 
+    "MinStakeExecuted(uint256,uint256)": TypedContractEvent<
+      MinStakeExecutedEvent.InputTuple,
+      MinStakeExecutedEvent.OutputTuple,
+      MinStakeExecutedEvent.OutputObject
+    >;
+    MinStakeExecuted: TypedContractEvent<
+      MinStakeExecutedEvent.InputTuple,
+      MinStakeExecutedEvent.OutputTuple,
+      MinStakeExecutedEvent.OutputObject
+    >;
+
+    "MinStakeProposed(uint256,uint256)": TypedContractEvent<
+      MinStakeProposedEvent.InputTuple,
+      MinStakeProposedEvent.OutputTuple,
+      MinStakeProposedEvent.OutputObject
+    >;
+    MinStakeProposed: TypedContractEvent<
+      MinStakeProposedEvent.InputTuple,
+      MinStakeProposedEvent.OutputTuple,
+      MinStakeProposedEvent.OutputObject
+    >;
+
     "OwnershipTransferred(address,address)": TypedContractEvent<
       OwnershipTransferredEvent.InputTuple,
       OwnershipTransferredEvent.OutputTuple,
@@ -553,6 +774,17 @@ export interface EvaluatorRegistry extends BaseContract {
       OwnershipTransferredEvent.InputTuple,
       OwnershipTransferredEvent.OutputTuple,
       OwnershipTransferredEvent.OutputObject
+    >;
+
+    "ProposalCancelled(bytes32)": TypedContractEvent<
+      ProposalCancelledEvent.InputTuple,
+      ProposalCancelledEvent.OutputTuple,
+      ProposalCancelledEvent.OutputObject
+    >;
+    ProposalCancelled: TypedContractEvent<
+      ProposalCancelledEvent.InputTuple,
+      ProposalCancelledEvent.OutputTuple,
+      ProposalCancelledEvent.OutputObject
     >;
 
     "Staked(address,uint256,uint256)": TypedContractEvent<

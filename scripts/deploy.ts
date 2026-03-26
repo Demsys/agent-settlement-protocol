@@ -208,6 +208,8 @@ async function main(): Promise<void> {
   // Core ERC-8183 implementation.
   // feeRecipient is set to the deployer wallet for the initial SaaS phase;
   // governance can rotate this address via ProtocolToken DAO post-launch.
+  // MockUSDC is passed in _initialAllowedTokens to whitelist it at construction
+  // (FINDING-007: token whitelist to prevent fee-on-transfer token attacks).
   let agentJobManagerDeployment: ContractDeployment
   let agentJobManagerAddress: string
   try {
@@ -216,6 +218,7 @@ async function main(): Promise<void> {
       evaluatorRegistryAddress,
       FEE_RATE,
       deployer.address, // feeRecipient = deployer wallet for initial SaaS phase
+      [mockUSDCDeployment.address], // _initialAllowedTokens — FINDING-007
       await getFreshGasOverrides(),
     )
     await agentJobManager.waitForDeployment()
@@ -268,21 +271,27 @@ async function main(): Promise<void> {
 
   console.log("\n--- Post-deployment configuration ---\n")
 
-  // Tell the EvaluatorRegistry which AgentJobManager contract it serves,
-  // so it can enforce that only the job manager calls assignEvaluator().
+  // Tell the EvaluatorRegistry which AgentJobManager contract it serves.
+  // FINDING-005: setJobManager is now timelocked (GOVERNANCE_DELAY = 2 days).
+  // This script calls proposeJobManager() which starts the 2-day countdown.
+  // After 2 days, the deployer must call executeJobManager(agentJobManagerAddress)
+  // to complete the wiring. Until then, assignEvaluator() will revert (no eligible
+  // jobManager), meaning auto-assigned evaluator jobs will fail — this is acceptable
+  // during the 2-day governance window before production launch.
   try {
     const evaluatorRegistry = await ethers.getContractAt(
       "EvaluatorRegistry",
       evaluatorRegistryAddress,
     )
-    const tx = await evaluatorRegistry.setJobManager(agentJobManagerAddress, await getFreshGasOverrides())
+    const tx = await evaluatorRegistry.proposeJobManager(agentJobManagerAddress, await getFreshGasOverrides())
     const receipt = await tx.wait(1)
     if (receipt === null || receipt.status === 0) {
-      throw new Error("setJobManager transaction failed (status 0)")
+      throw new Error("proposeJobManager transaction failed (status 0)")
     }
-    logConfig(`EvaluatorRegistry.setJobManager(${agentJobManagerAddress})`, receipt.hash)
+    logConfig(`EvaluatorRegistry.proposeJobManager(${agentJobManagerAddress}) — execute after 2-day GOVERNANCE_DELAY`, receipt.hash)
+    console.log("  ⚠  IMPORTANT: Run scripts/executeGovernance.ts after 2 days to call executeJobManager().")
   } catch (err) {
-    console.error("\n  ERROR: EvaluatorRegistry.setJobManager() failed.")
+    console.error("\n  ERROR: EvaluatorRegistry.proposeJobManager() failed.")
     console.error(err)
     process.exit(1)
   }
