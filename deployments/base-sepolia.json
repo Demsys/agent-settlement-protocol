@@ -1,28 +1,28 @@
 {
   "network": "base-sepolia",
   "chainId": 84532,
-  "deployedAt": "2026-03-26T22:10:12.049Z",
+  "deployedAt": "2026-03-26T22:30:30.074Z",
   "deployer": "0xEEb3E4548fbdfb8F3bEF8D496cC086Bb403C85E5",
   "contracts": {
     "MockUSDC": {
-      "address": "0xA98F40D35A767B886E46aA46Adb6A1348AF112C5",
-      "txHash": "0x0fe98d1b5ca45c56e94862eb0a66f8995dfd3b95c64ce6dbc837f7757318bf65"
+      "address": "0xA19894e0ae6CEA29D3a5fAA6434F15E046053a4D",
+      "txHash": "0x136abb32c17f4fe87f4f7b621cefaab1d6f6c42eec1998406d9c6be3c982ef8d"
     },
     "ProtocolToken": {
-      "address": "0x52c44de505819A40404E93a7Eacb11Ac703E6821",
-      "txHash": "0xc637ec6bc69386240ca8dafc5f76e4a4110169ece2499df97239a4485135a1d2"
+      "address": "0xe239317dBbb1D73C3BC2513b563951f38EeA3566",
+      "txHash": "0x557d1b770276a381463145a2ae6462753a31a39aecf0766219e8694b93b493b7"
     },
     "EvaluatorRegistry": {
-      "address": "0x601bD1230C6676453984C25a8997C7D4268160F1",
-      "txHash": "0xa4bdc69aeb13fb7066661df6757486a625c0bc3169a6c2e583f90d1d1e111832"
+      "address": "0xC9E1e5038B030253263387089692ff9A2547477a",
+      "txHash": "0x61f73f4adc296eb8e844215b661021fd5aff26118696a5ec6042f1a6c0ff21bf"
     },
     "AgentJobManager": {
-      "address": "0x0f2542B8BF316FddA109Bb4686D4c324F8E8AE55",
-      "txHash": "0xa49c0028f39315012e59f3b7444e18cfcb237bdba92bb60d37aae7220790ec42"
+      "address": "0xa10Db59e92aDd50687A8D36f3978abEBc04f6C5B",
+      "txHash": "0xf6e3072ee62c1c347c5c57ada8e74925474edbba4c7f0801c27a51bf1e317b31"
     },
     "ReputationBridge": {
-      "address": "0x16057F1Df504E2d4374E80ED584cea69C7B3AC9c",
-      "txHash": "0x094740d04e8ad56a5c7d9d7d826edf671603df58b4af968d830ea1d1f26455f1"
+      "address": "0x00aEBdB60f7f40B70423Bbcff41B50C395F55e45",
+      "txHash": "0xac9eda91894ea590fd376a8e808915d6aa79ab8536c179c229a90868228f3ccd"
     }
   },
   "config": {

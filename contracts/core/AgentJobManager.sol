@@ -395,8 +395,10 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // which would prevent complete() from transferring the full agreed amount.
         if (!allowedTokens[token]) revert TokenNotAllowed(token);
 
-        // The client (msg.sender) cannot be the provider — a party cannot pay itself.
-        if (provider == msg.sender) revert SelfAssignment("provider");
+        // Note: client == provider is intentionally allowed. In single-agent deployments
+        // (MVP / testnet), the same wallet acts as both client and provider: it funds the
+        // escrow and later calls submit() with the work deliverable. The evaluator is always
+        // an independent third party (enforced below), so the trust guarantee is preserved.
 
         // The client cannot be their own evaluator — would allow self-approval of work.
         // address(0) is allowed here (auto-assignment path).
