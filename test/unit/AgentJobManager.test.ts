@@ -215,18 +215,20 @@ describe("AgentJobManager", function () {
       ).to.be.revertedWithCustomError(manager, "ZeroAddress").withArgs("token");
     });
 
-    it("should revert with SelfAssignment when provider == client", async function () {
+    it("should allow client == provider (single-agent MVP pattern)", async function () {
       const { manager, usdc, client } = await loadFixture(deployFixture);
       const deadline = BigInt(await time.latest()) + 3600n;
 
+      // client == provider is explicitly allowed: in single-agent deployments the same
+      // wallet funds the escrow and submits the deliverable.
       await expect(
         manager.connect(client).createJob(
-          client.address,  // provider == client
+          client.address,  // provider == client — now allowed
           ethers.ZeroAddress,
           await usdc.getAddress(),
           deadline
         )
-      ).to.be.revertedWithCustomError(manager, "SelfAssignment").withArgs("provider");
+      ).to.not.be.reverted;
     });
 
     it("should revert with SelfAssignment when evaluator == client", async function () {
