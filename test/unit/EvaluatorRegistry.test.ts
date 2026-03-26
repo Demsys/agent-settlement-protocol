@@ -39,17 +39,24 @@ async function deployFixture() {
   const usdc = (await MockUSDCFactory.deploy()) as MockUSDC;
   await usdc.waitForDeployment();
 
-  // 4. AgentJobManager — provides a valid jobManager address for the registry
+  // 4. AgentJobManager — provides a valid jobManager address for the registry.
+  //    MockUSDC is passed in _initialAllowedTokens (FINDING-007).
   const AgentJobManagerFactory = await ethers.getContractFactory("AgentJobManager");
   const manager = (await AgentJobManagerFactory.deploy(
     await registry.getAddress(),
     FEE_RATE,
-    deployer.address  // feeRecipient
+    deployer.address,  // feeRecipient
+    [await usdc.getAddress()]  // _initialAllowedTokens — FINDING-007
   )) as AgentJobManager;
   await manager.waitForDeployment();
 
-  // 5. Wire up
-  await registry.setJobManager(await manager.getAddress());
+  // 5. Wire up using the propose/execute timelock pattern (FINDING-005).
+  //    GOVERNANCE_DELAY = 2 days — we advance time so the registry is operational
+  //    from the first test in this suite.
+  const GOVERNANCE_DELAY_SEC = 2 * 24 * 3600;
+  await registry.proposeJobManager(await manager.getAddress());
+  await time.increase(GOVERNANCE_DELAY_SEC + 1);
+  await registry.executeJobManager(await manager.getAddress());
 
   // Distribute tokens to evaluators so they can stake
   await protocolToken.transfer(evaluatorA.address, ABOVE_MIN);
@@ -537,9 +544,11 @@ describe("EvaluatorRegistry", function () {
     });
   });
 
-  // ── setMinEvaluatorStake ──────────────────────────────────────────────────
+  // ── proposeMinEvaluatorStake / executeMinEvaluatorStake (FINDING-005 timelock) ──
 
-  describe("setMinEvaluatorStake", function () {
+  describe("proposeMinEvaluatorStake / executeMinEvaluatorStake", function () {
+
+    const GOVERNANCE_DELAY_SEC = 2 * 24 * 3600; // 2 days — mirrors EvaluatorRegistry.GOVERNANCE_DELAY
 
     async function twoEvaluatorsFixture() {
       const base = await deployFixture();
@@ -557,13 +566,15 @@ describe("EvaluatorRegistry", function () {
       return base;
     }
 
-    it("should deactivate evaluators below the new minimum when minimum is raised", async function () {
+    it("should deactivate evaluators below the new minimum when minimum is raised (after delay)", async function () {
       const { registry, deployer, evaluatorA, evaluatorB } = await loadFixture(twoEvaluatorsFixture);
 
-      // Raise minimum to 150 — evaluatorA (100 staked) drops out, evaluatorB (200) stays
       const newMinimum = ethers.parseEther("150");
 
-      await expect(registry.connect(deployer).setMinEvaluatorStake(newMinimum))
+      await registry.connect(deployer).proposeMinEvaluatorStake(newMinimum);
+      await time.increase(GOVERNANCE_DELAY_SEC + 1);
+
+      await expect(registry.connect(deployer).executeMinEvaluatorStake(newMinimum))
         .to.emit(registry, "MinEvaluatorStakeUpdated")
         .withArgs(MIN_STAKE, newMinimum);
 
@@ -576,27 +587,68 @@ describe("EvaluatorRegistry", function () {
       const { registry, deployer, evaluatorA } = await loadFixture(twoEvaluatorsFixture);
 
       const newMinimum = ethers.parseEther("150");
-      await registry.connect(deployer).setMinEvaluatorStake(newMinimum);
+      await registry.connect(deployer).proposeMinEvaluatorStake(newMinimum);
+      await time.increase(GOVERNANCE_DELAY_SEC + 1);
+      await registry.connect(deployer).executeMinEvaluatorStake(newMinimum);
 
-      // evaluatorA was deactivated — isEligible should be false
       expect(await registry.isEligible(evaluatorA.address)).to.be.false;
     });
 
-    it("should revert with ZeroAmount when newMinimum is 0", async function () {
+    it("should revert with ZeroAmount when newMinimum is 0 at proposal time", async function () {
       const { registry, deployer } = await loadFixture(deployFixture);
 
-      await expect(registry.connect(deployer).setMinEvaluatorStake(0n))
+      await expect(registry.connect(deployer).proposeMinEvaluatorStake(0n))
         .to.be.revertedWithCustomError(registry, "ZeroAmount");
     });
 
-    it("should emit MinEvaluatorStakeUpdated with old and new values", async function () {
+    it("should revert with GovernanceDelayNotElapsed when executed too early", async function () {
       const { registry, deployer } = await loadFixture(deployFixture);
-
       const newMinimum = ethers.parseEther("150");
 
-      await expect(registry.connect(deployer).setMinEvaluatorStake(newMinimum))
-        .to.emit(registry, "MinEvaluatorStakeUpdated")
+      await registry.connect(deployer).proposeMinEvaluatorStake(newMinimum);
+      // Do NOT advance time — should revert
+
+      await expect(registry.connect(deployer).executeMinEvaluatorStake(newMinimum))
+        .to.be.revertedWithCustomError(registry, "GovernanceDelayNotElapsed");
+    });
+
+    it("should revert with NoProposalPending when executing without a prior proposal", async function () {
+      const { registry, deployer } = await loadFixture(deployFixture);
+      const newMinimum = ethers.parseEther("150");
+
+      await expect(registry.connect(deployer).executeMinEvaluatorStake(newMinimum))
+        .to.be.revertedWithCustomError(registry, "NoProposalPending");
+    });
+
+    it("should revert with ProposalValueMismatch when execute value differs from proposed value", async function () {
+      const { registry, deployer } = await loadFixture(deployFixture);
+      const proposed = ethers.parseEther("150");
+      const different = ethers.parseEther("200");
+
+      await registry.connect(deployer).proposeMinEvaluatorStake(proposed);
+      await time.increase(GOVERNANCE_DELAY_SEC + 1);
+
+      await expect(registry.connect(deployer).executeMinEvaluatorStake(different))
+        .to.be.revertedWithCustomError(registry, "ProposalValueMismatch");
+    });
+
+    it("should emit MinStakeExecuted when executed successfully", async function () {
+      const { registry, deployer } = await loadFixture(deployFixture);
+      const newMinimum = ethers.parseEther("150");
+
+      await registry.connect(deployer).proposeMinEvaluatorStake(newMinimum);
+      await time.increase(GOVERNANCE_DELAY_SEC + 1);
+
+      await expect(registry.connect(deployer).executeMinEvaluatorStake(newMinimum))
+        .to.emit(registry, "MinStakeExecuted")
         .withArgs(MIN_STAKE, newMinimum);
+    });
+
+    it("should revert with OwnableUnauthorizedAccount when non-owner proposes", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+
+      await expect(registry.connect(stranger).proposeMinEvaluatorStake(ethers.parseEther("150")))
+        .to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
     });
   });
 });

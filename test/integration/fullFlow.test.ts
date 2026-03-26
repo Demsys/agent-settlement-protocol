@@ -55,23 +55,31 @@ async function fullDeployFixture() {
   )) as EvaluatorRegistry;
   await registry.waitForDeployment();
 
-  // ── 3. Deploy AgentJobManager ─────────────────────────────────────────────
-  //    feeRecipient = deployer (acting as protocol treasury in these tests)
+  // ── 3. Deploy MockUSDC — must come before AgentJobManager so its address
+  //       can be passed in _initialAllowedTokens (FINDING-007 whitelist fix).
+  const MockUSDCFactory = await ethers.getContractFactory("MockUSDC");
+  const usdc = (await MockUSDCFactory.deploy()) as MockUSDC;
+  await usdc.waitForDeployment();
+
+  // ── 4. Deploy AgentJobManager ─────────────────────────────────────────────
+  //    feeRecipient = deployer (acting as protocol treasury in these tests).
+  //    MockUSDC is whitelisted at construction (FINDING-007).
   const AgentJobManagerFactory = await ethers.getContractFactory("AgentJobManager");
   const manager = (await AgentJobManagerFactory.deploy(
     await registry.getAddress(),
     FEE_RATE,
-    deployer.address
+    deployer.address,
+    [await usdc.getAddress()]  // _initialAllowedTokens — FINDING-007
   )) as AgentJobManager;
   await manager.waitForDeployment();
 
-  // ── 4. Wire EvaluatorRegistry → AgentJobManager ──────────────────────────
-  await registry.setJobManager(await manager.getAddress());
-
-  // ── 5. Deploy MockUSDC ────────────────────────────────────────────────────
-  const MockUSDCFactory = await ethers.getContractFactory("MockUSDC");
-  const usdc = (await MockUSDCFactory.deploy()) as MockUSDC;
-  await usdc.waitForDeployment();
+  // ── 5. Wire EvaluatorRegistry → AgentJobManager using the timelock pattern (FINDING-005).
+  //    GOVERNANCE_DELAY = 2 days. We advance time here; the staking + warmup below adds
+  //    another WARMUP_PERIOD on top, so the total time advance is intentional.
+  const GOVERNANCE_DELAY_SEC = 2 * 24 * 3600;
+  await registry.proposeJobManager(await manager.getAddress());
+  await time.increase(GOVERNANCE_DELAY_SEC + 1);
+  await registry.executeJobManager(await manager.getAddress());
 
   // ── 6. Deployer stakes and waits for warmup ───────────────────────────────
   await protocolToken.approve(await registry.getAddress(), MIN_STAKE);

@@ -80,6 +80,23 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     ///      and evaluators can react to deactivation caused by a raised minimum.
     event MinEvaluatorStakeUpdated(uint256 oldMinimum, uint256 newMinimum);
 
+    // ── Governance timelock events ────────────────────────────────────────────
+
+    /// @notice Emitted when a jobManager change is proposed.
+    event JobManagerProposed(address indexed newJobManager, uint256 executableAt);
+
+    /// @notice Emitted when a pending jobManager change is executed.
+    event JobManagerUpdated(address indexed oldJobManager, address indexed newJobManager);
+
+    /// @notice Emitted when a minEvaluatorStake change is proposed.
+    event MinStakeProposed(uint256 newMinimum, uint256 executableAt);
+
+    /// @notice Emitted when a pending minEvaluatorStake change is executed.
+    event MinStakeExecuted(uint256 oldMinimum, uint256 newMinimum);
+
+    /// @notice Emitted when any pending governance proposal is cancelled by the owner.
+    event ProposalCancelled(bytes32 indexed key);
+
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     /// @notice Thrown when a function is called by an address that is not the jobManager.
@@ -109,16 +126,34 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @param maximum  The maximum allowed warmup period (30 days).
     error WarmupPeriodTooLong(uint64 proposed, uint64 maximum);
 
+    // ── Governance timelock errors ────────────────────────────────────────────
+
+    /// @notice Thrown when execute*() is called but no proposal exists for that key.
+    error NoProposalPending(bytes32 key);
+
+    /// @notice Thrown when execute*() is called before the governance delay has elapsed.
+    error GovernanceDelayNotElapsed(uint256 executableAt);
+
+    /// @notice Thrown when the value passed to execute*() does not match the proposed value.
+    error ProposalValueMismatch();
+
     // ─── Constants ────────────────────────────────────────────────────────────
 
     /// @notice Minimum stake required to be eligible as an evaluator.
-    /// @dev 100 tokens with 18 decimals = 100 * 1e18. Governable via setMinEvaluatorStake().
+    /// @dev 100 tokens with 18 decimals = 100 * 1e18. Governable via proposeMinEvaluatorStake/executeMinEvaluatorStake.
     uint256 public minEvaluatorStake = 100 * 1e18;
 
     /// @notice Absolute ceiling on the warmup period, enforced in setWarmupPeriod().
     /// @dev 30 days is already a very conservative anti-Sybil window. A higher value
     ///      would risk starving the registry of eligible evaluators during bootstrapping.
     uint64 public constant MAX_WARMUP_PERIOD = 30 days;
+
+    /// @notice Mandatory delay between a governance proposal and its execution.
+    /// @dev FINDING-005: mirrors the same constant in AgentJobManager.
+    ///      Applies to: setJobManager and setMinEvaluatorStake.
+    ///      setWarmupPeriod is NOT timelocked because it does not control fund flow —
+    ///      it affects only evaluator eligibility timing, which is less critical.
+    uint256 public constant GOVERNANCE_DELAY = 2 days;
 
     // ─── Warmup period (anti-Sybil) ───────────────────────────────────────────
 
@@ -139,7 +174,9 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     // ─── State variables ─────────────────────────────────────────────────────
 
     /// @notice Address of the AgentJobManager — the only caller allowed for assign/slash.
-    /// @dev Set after deployment via setJobManager() since AgentJobManager depends on us.
+    /// @dev Updated via proposeJobManager/executeJobManager with GOVERNANCE_DELAY.
+    ///      Changing this address is critical: a wrong address would allow an
+    ///      arbitrary contract to trigger slashing and drain all staked tokens.
     address public jobManager;
 
     /// @notice Staking state per evaluator address.
@@ -149,6 +186,17 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @dev Used for O(n) weighted random selection. In production with thousands of
     ///      evaluators, this should be replaced with a more efficient data structure.
     address[] private activeEvaluators;
+
+    // ─── Governance timelock state ────────────────────────────────────────────
+
+    /// @notice Pending governance changes, keyed by keccak256 of parameter name.
+    /// @dev FINDING-005: same pattern as AgentJobManager.pendingChanges.
+    struct PendingChange {
+        bytes32 valueHash;    // keccak256(abi.encode(newValue))
+        uint256 executableAt; // Earliest executable timestamp
+    }
+
+    mapping(bytes32 => PendingChange) private pendingChanges;
 
     // ─── Modifiers ────────────────────────────────────────────────────────────
 
@@ -378,58 +426,99 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
     // ─── Admin functions ─────────────────────────────────────────────────────
 
+    // ── Governance timelock: jobManager ──────────────────────────────────────
+
     /**
-     * @notice Sets the AgentJobManager address. Only callable by the owner.
-     * @dev Must be called once after AgentJobManager is deployed.
-     *      Can be updated if the JobManager is upgraded (with appropriate governance).
-     * @param _jobManager Address of the deployed AgentJobManager contract.
+     * @notice Step 1 of 2 — proposes a new AgentJobManager address.  Actual update
+     *         is delayed by GOVERNANCE_DELAY (2 days).
+     * @dev FINDING-005: the jobManager address controls who can call slash() and
+     *      assignEvaluator(). A malicious or incorrect rotation would allow an attacker
+     *      to slash all evaluators arbitrarily. The 2-day delay makes the pending change
+     *      publicly visible before it takes effect, giving stakers time to react.
+     *
+     *      First-time wiring (initial deployment): because GOVERNANCE_DELAY is 2 days
+     *      but tests and the deployment script need to call setJobManager immediately
+     *      after deployment, the registry exposes proposeJobManager / executeJobManager.
+     *      For the initial deployment on testnet, the deployer calls both in the same
+     *      script (proposal + time.increase + execute in tests, or a multi-step script
+     *      on chain). For production, the delay is enforced.
+     * @param _jobManager Proposed AgentJobManager address. Must be non-zero.
      */
-    function setJobManager(address _jobManager) external onlyOwner {
+    function proposeJobManager(address _jobManager) external onlyOwner {
         if (_jobManager == address(0)) revert ZeroAddress("jobManager");
+
+        bytes32 key = keccak256("jobManager");
+        uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
+        pendingChanges[key] = PendingChange({
+            valueHash:    keccak256(abi.encode(_jobManager)),
+            executableAt: executableAt
+        });
+        emit JobManagerProposed(_jobManager, executableAt);
+    }
+
+    /**
+     * @notice Step 2 of 2 — executes a previously proposed jobManager change.
+     * @param _jobManager Must match the value passed to the corresponding proposeJobManager().
+     */
+    function executeJobManager(address _jobManager) external onlyOwner {
+        bytes32 key = keccak256("jobManager");
+        PendingChange storage p = pendingChanges[key];
+
+        if (p.executableAt == 0) revert NoProposalPending(key);
+        if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
+        if (p.valueHash != keccak256(abi.encode(_jobManager))) revert ProposalValueMismatch();
+
+        delete pendingChanges[key]; // CEI: clear before applying
+        address oldJobManager = jobManager;
         jobManager = _jobManager;
+        emit JobManagerUpdated(oldJobManager, _jobManager);
     }
 
-    /**
-     * @notice Updates the warmup period for new or re-staking evaluators.
-     * @dev The warmup period is how long an evaluator must remain above minEvaluatorStake
-     *      before they appear in assignEvaluator()'s weighted selection pool.
-     *      A higher value increases Sybil resistance at the cost of slower onboarding.
-     *      A lower value accelerates onboarding but reduces the economic friction of
-     *      creating multiple short-lived evaluator wallets.
-     *      Bounded by MAX_WARMUP_PERIOD (30 days) to ensure the registry cannot be
-     *      governance-locked into perpetually having zero eligible evaluators.
-     *      Note: changing the warmup period affects future assignments only. Evaluators
-     *      already past the old warmup threshold remain eligible; evaluators who were
-     *      previously ineligible under a longer period may become eligible under a shorter one.
-     * @param newPeriod New warmup duration in seconds. Maximum: 30 days (MAX_WARMUP_PERIOD).
-     */
-    function setWarmupPeriod(uint64 newPeriod) external onlyOwner {
-        if (newPeriod > MAX_WARMUP_PERIOD) revert WarmupPeriodTooLong(newPeriod, MAX_WARMUP_PERIOD);
-        warmupPeriod = newPeriod;
-        emit WarmupPeriodUpdated(newPeriod);
-    }
+    // ── Governance timelock: minEvaluatorStake ────────────────────────────────
 
     /**
-     * @notice Updates the minimum stake required to be an active evaluator.
-     * @dev Lowering the minimum activates evaluators who previously had insufficient stake.
-     *      Raising the minimum deactivates evaluators who fall below the new threshold.
-     *      In both cases, the activeEvaluators array is updated accordingly.
-     * @param newMinimum New minimum stake amount (in wei, 18 decimals).
+     * @notice Step 1 of 2 — proposes a new minimum evaluator stake.
+     * @dev FINDING-005: raising the minimum immediately would deactivate evaluators
+     *      mid-assignment, potentially blocking active jobs from completing. The 2-day
+     *      delay gives evaluators time to top-up their stake if needed before the
+     *      new threshold takes effect.
+     * @param newMinimum Proposed minimum stake in wei (18 decimals). Must be non-zero.
      */
-    function setMinEvaluatorStake(uint256 newMinimum) external onlyOwner {
+    function proposeMinEvaluatorStake(uint256 newMinimum) external onlyOwner {
         if (newMinimum == 0) revert ZeroAmount();
 
-        // Capture the old value before overwriting so we can emit it in the event.
-        // Emitting before the write would also work, but capturing is clearer and avoids
-        // any ambiguity about which value is "old" if this function is ever extended.
+        bytes32 key = keccak256("minEvaluatorStake");
+        uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
+        pendingChanges[key] = PendingChange({
+            valueHash:    keccak256(abi.encode(newMinimum)),
+            executableAt: executableAt
+        });
+        emit MinStakeProposed(newMinimum, executableAt);
+    }
+
+    /**
+     * @notice Step 2 of 2 — executes a previously proposed minimum stake change.
+     * @dev Replicates the O(n) eligibility re-evaluation logic from the old immediate setter.
+     *      This is safe here because the execution is intentionally delayed — the owner
+     *      has had 2 days to assess gas costs and any operational impact.
+     * @param newMinimum Must match the value passed to the corresponding proposeMinEvaluatorStake().
+     */
+    function executeMinEvaluatorStake(uint256 newMinimum) external onlyOwner {
+        bytes32 key = keccak256("minEvaluatorStake");
+        PendingChange storage p = pendingChanges[key];
+
+        if (p.executableAt == 0) revert NoProposalPending(key);
+        if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
+        if (p.valueHash != keccak256(abi.encode(newMinimum))) revert ProposalValueMismatch();
+
+        delete pendingChanges[key]; // CEI: clear before applying
+
         uint256 oldMinimum = minEvaluatorStake;
         minEvaluatorStake = newMinimum;
 
         // Re-evaluate eligibility for all registered evaluators when the minimum changes.
-        // This is O(n) but setMinEvaluatorStake is an infrequent governance action.
-        // We iterate all active evaluators and deactivate those that fall below the new minimum.
-        // Note: we cannot easily activate previously inactive evaluators here without
-        // a separate enumerable set of all stakers — this is an acceptable limitation.
+        // This is O(n) but executeMinEvaluatorStake is an infrequent governance action
+        // whose cost is known and accepted by the owner who signed the execute transaction.
         uint256 i = 0;
         while (i < activeEvaluators.length) {
             address addr = activeEvaluators[i];
@@ -440,7 +529,6 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
                 eval.active      = false;
                 eval.index       = 0;
                 // Reset activeSince: deactivated evaluator has no active period.
-                // Avoids leaving a stale ghost timestamp for future auditors.
                 eval.activeSince = 0;
                 // Do not increment i — the swapped element now occupies index i.
             } else {
@@ -449,6 +537,34 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         }
 
         emit MinEvaluatorStakeUpdated(oldMinimum, newMinimum);
+        emit MinStakeExecuted(oldMinimum, newMinimum);
+    }
+
+    // ── Governance: proposal cancellation ────────────────────────────────────
+
+    /**
+     * @notice Cancels any pending governance proposal identified by its key.
+     * @param key keccak256 identifier of the proposal to cancel.
+     */
+    function cancelProposal(bytes32 key) external onlyOwner {
+        delete pendingChanges[key];
+        emit ProposalCancelled(key);
+    }
+
+    /**
+     * @notice Updates the warmup period for new or re-staking evaluators.
+     * @dev NOT timelocked: warmup changes only affect future evaluator eligibility timing,
+     *      not fund flows. The impact is bounded (cannot exceed MAX_WARMUP_PERIOD = 30 days)
+     *      and primarily affects how quickly new evaluators become eligible — acceptable
+     *      for an immediate governance action.
+     *      The warmup period is how long an evaluator must remain above minEvaluatorStake
+     *      before they appear in assignEvaluator()'s weighted selection pool.
+     * @param newPeriod New warmup duration in seconds. Maximum: 30 days (MAX_WARMUP_PERIOD).
+     */
+    function setWarmupPeriod(uint64 newPeriod) external onlyOwner {
+        if (newPeriod > MAX_WARMUP_PERIOD) revert WarmupPeriodTooLong(newPeriod, MAX_WARMUP_PERIOD);
+        warmupPeriod = newPeriod;
+        emit WarmupPeriodUpdated(newPeriod);
     }
 
     // ─── View functions ───────────────────────────────────────────────────────
