@@ -39,6 +39,21 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv = __importStar(require("dotenv"));
 const path = __importStar(require("path"));
 dotenv.config({ path: path.join(process.cwd(), '..', '.env') });
+// -------------------------------------------------------------------
+// Fail fast on missing critical configuration.
+// Railway will surface the exit code in its deploy logs, making the
+// root cause immediately obvious rather than buried in a stack trace.
+// -------------------------------------------------------------------
+const REQUIRED_ENV_VARS = ['BASE_SEPOLIA_RPC_URL', 'WALLET_ENCRYPTION_KEY'];
+const missingVars = REQUIRED_ENV_VARS.filter((v) => !process.env[v]);
+if (missingVars.length > 0) {
+    console.error(`[startup] Missing required environment variables: ${missingVars.join(', ')}`);
+    process.exit(1);
+}
+// PRIVATE_KEY is optional — faucet and evaluator seeding are disabled without it
+if (!process.env.PRIVATE_KEY) {
+    console.warn('[startup] PRIVATE_KEY not set — faucet and agent seeding disabled');
+}
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const cors_1 = __importDefault(require("cors"));
@@ -63,14 +78,27 @@ process.on('uncaughtException', (err) => {
     console.error('[uncaughtException]', err);
 });
 // -------------------------------------------------------------------
+// Network-aware constants
+// -------------------------------------------------------------------
+const NETWORK = process.env.NETWORK ?? 'testnet';
+const BASESCAN_BASE = NETWORK === 'mainnet'
+    ? 'https://basescan.org'
+    : 'https://sepolia.basescan.org';
+// -------------------------------------------------------------------
 // App setup
 // -------------------------------------------------------------------
 const app = (0, express_1.default)();
-// CORS — open during testnet/developer-testing phase
-// Tighten to specific origins before production
-app.use((0, cors_1.default)());
+// Body limit — protects against oversized malicious payloads that could
+// exhaust memory before the JSON parser even finishes.
+app.use(body_parser_1.default.json({ limit: '10kb' }));
 // Security headers (XSS protection, content-type sniffing, etc.)
 app.use((0, helmet_1.default)());
+// CORS — configurable via env var so testnet stays open for developer
+// testing while mainnet can be locked to known frontend origins.
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : '*';
+app.use((0, cors_1.default)(allowedOrigins === '*' ? undefined : { origin: allowedOrigins }));
 // IP-based rate limiting — 120 requests / 15 min per IP
 const limiter = (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000,
@@ -80,7 +108,17 @@ const limiter = (0, express_rate_limit_1.default)({
     message: { error: 'Too many requests, please try again later.', code: 'RATE_LIMITED' },
 });
 app.use(limiter);
-app.use(body_parser_1.default.json());
+// Stricter per-route limiter for agent creation.
+// FINDING-002 fix: each agent creation triggers a deployer ETH seed transfer.
+// Without this limiter, an attacker can drain the deployer at 120 × 0.001 ETH
+// per 15 minutes per IP. Capped here at 3 agents/hour/IP to bound drain rate.
+const agentCreationLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Agent creation limit reached. Max 3 per hour per IP.', code: 'RATE_LIMITED' },
+});
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 // Blockchain call timeout — transactions that are not confirmed within this
 // window are considered failed (avoids hanging forever on a slow RPC node).
@@ -93,7 +131,7 @@ function apiError(res, status, code, message) {
     res.status(status).json({ error: message, code });
 }
 function basescanTx(txHash) {
-    return `https://sepolia.basescan.org/tx/${txHash}`;
+    return `${BASESCAN_BASE}/tx/${txHash}`;
 }
 // Wraps any promise with a hard timeout so blockchain calls never hang forever.
 function withTimeout(promise, label) {
@@ -188,6 +226,8 @@ app.post('/v1/faucet/usdc', async (req, res) => {
 const AGENT_SEED_ETH = ethers_1.ethers.parseEther('0.001');
 // Singleton deployer wallet — reused across all seed calls so ethers.js
 // manages the nonce internally and avoids reuse on concurrent requests.
+// Uses primaryProvider (a plain JsonRpcProvider) because ethers.Wallet
+// requires a concrete provider that can sign and broadcast transactions.
 let _deployerWallet = null;
 function getDeployerWallet() {
     if (_deployerWallet)
@@ -195,7 +235,7 @@ function getDeployerWallet() {
     const privateKey = process.env.PRIVATE_KEY;
     if (!privateKey)
         return null;
-    _deployerWallet = new ethers_1.ethers.Wallet(privateKey, contracts_1.provider);
+    _deployerWallet = new ethers_1.ethers.Wallet(privateKey, contracts_1.primaryProvider);
     return _deployerWallet;
 }
 // Serial seed queue — prevents concurrent seed calls from colliding on nonce.
@@ -206,7 +246,7 @@ async function seedAgentWallet(agentAddress) {
         if (!deployer)
             return;
         try {
-            const balance = await contracts_1.provider.getBalance(deployer.address);
+            const balance = await contracts_1.primaryProvider.getBalance(deployer.address);
             if (balance < AGENT_SEED_ETH) {
                 console.warn(`Deployer balance too low to seed agent wallet ${agentAddress}`);
                 return;
@@ -221,7 +261,7 @@ async function seedAgentWallet(agentAddress) {
     });
     await _seedQueue;
 }
-app.post('/v1/agents', async (req, res) => {
+app.post('/v1/agents', agentCreationLimiter, async (req, res) => {
     const { name } = req.body;
     if (!name || typeof name !== 'string' || name.trim() === '') {
         apiError(res, 400, 'INVALID_NAME', 'name is required and must be a non-empty string');
@@ -272,10 +312,11 @@ app.post('/v1/jobs', requireApiKey, async (req, res) => {
         return;
     }
     try {
-        const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.provider);
+        // Wallet signers require a JsonRpcProvider — use primaryProvider here
+        const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.primaryProvider);
         const jobManager = (0, contracts_1.getJobManagerWithSigner)(signer);
         // Track nonce manually to avoid stale-nonce errors on L2 RPC nodes
-        let nonce = await contracts_1.provider.getTransactionCount(await signer.getAddress(), 'pending');
+        let nonce = await contracts_1.primaryProvider.getTransactionCount(await signer.getAddress(), 'pending');
         const budgetWei = ethers_1.ethers.parseUnits(budget, contracts_1.USDC_DECIMALS);
         // Deadline is a Unix timestamp — contract checks deadline > block.timestamp
         const deadlineTimestamp = BigInt(Math.floor(Date.now() / 1000) + deadlineMins * 60);
@@ -368,7 +409,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req, res) => {
     // Fail fast: check the agent wallet has enough USDC before going async.
     // Avoids the confusing "job stays open forever" symptom when USDC is missing.
     try {
-        const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.provider);
+        const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.primaryProvider);
         const agentAddress = await signer.getAddress();
         const budgetWei = ethers_1.ethers.parseUnits(job.budget, contracts_1.USDC_DECIMALS);
         const usdcBalance = await (0, contracts_1.getMockUSDCReadOnly)().balanceOf(agentAddress);
@@ -386,14 +427,14 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req, res) => {
     setImmediate(async () => {
         console.log(`[fund] Background handler started for job ${id}`);
         try {
-            const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.provider);
+            const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.primaryProvider);
             const usdc = (0, contracts_1.getMockUSDCWithSigner)(signer);
             const jobManager = (0, contracts_1.getJobManagerWithSigner)(signer);
             const budgetWei = ethers_1.ethers.parseUnits(job.budget, contracts_1.USDC_DECIMALS);
             const jobManagerAddress = contracts_1.manifest.contracts.AgentJobManager.address;
             const agentAddress = await signer.getAddress();
             console.log(`[fund] Wallet ${agentAddress}, budget ${job.budget} USDC`);
-            let nonce = await contracts_1.provider.getTransactionCount(agentAddress, 'pending');
+            let nonce = await contracts_1.primaryProvider.getTransactionCount(agentAddress, 'pending');
             console.log(`[fund] Starting nonce: ${nonce}`);
             // Approve the maximum possible amount so the agent never needs a second approval
             // when creating more jobs with the same token — saves a transaction in the future.
@@ -457,7 +498,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req, res) => {
     setImmediate(async () => {
         console.log(`[submit] Background handler started for job ${id}`);
         try {
-            const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.provider);
+            const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.primaryProvider);
             const jobManager = (0, contracts_1.getJobManagerWithSigner)(signer);
             const providerAddress = await signer.getAddress();
             console.log(`[submit] Provider wallet: ${providerAddress}`);
@@ -466,7 +507,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req, res) => {
             const deliverableHash = ethers_1.ethers.keccak256(ethers_1.ethers.toUtf8Bytes(deliverable));
             console.log(`[submit] Deliverable hash: ${deliverableHash}`);
             const onChainJobId = BigInt(id);
-            const nonce = await contracts_1.provider.getTransactionCount(providerAddress, 'pending');
+            const nonce = await contracts_1.primaryProvider.getTransactionCount(providerAddress, 'pending');
             console.log(`[submit] Nonce: ${nonce}`);
             console.log(`[submit] Estimating gas for submit()…`);
             const gasEstimate = await jobManager.submit.estimateGas(onChainJobId, deliverableHash);
@@ -529,7 +570,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req, res) => {
             // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
             const reasonBytes = ethers_1.ethers.encodeBytes32String(reasonStr.slice(0, 31));
             const onChainJobId = BigInt(id);
-            const nonce = await contracts_1.provider.getTransactionCount(evaluatorAddress, 'pending');
+            const nonce = await contracts_1.primaryProvider.getTransactionCount(evaluatorAddress, 'pending');
             console.log(`[complete] Nonce: ${nonce}`);
             console.log(`[complete] Estimating gas for complete()…`);
             const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes);
@@ -556,7 +597,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req, res) => {
 // Returns the stored job record — clients use this to poll status after
 // receiving a 202 from fund/submit/complete (which process in background).
 // -------------------------------------------------------------------
-app.get('/v1/jobs/:id', async (req, res) => {
+app.get('/v1/jobs/:id', requireApiKey, async (req, res) => {
     const job = (0, storage_1.findJobById)(req.params.id);
     if (!job) {
         apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`);
@@ -625,7 +666,7 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req, res) => {
         // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
         const reasonBytes = ethers_1.ethers.encodeBytes32String(reasonStr.slice(0, 31));
         const onChainJobId = BigInt(id);
-        const nonce = await contracts_1.provider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending');
+        const nonce = await contracts_1.primaryProvider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending');
         const gasEstimate = await jobManager.reject.estimateGas(onChainJobId, reasonBytes);
         const rejectTx = await jobManager.reject(onChainJobId, reasonBytes, {
             gasLimit: (gasEstimate * 120n) / 100n, nonce,
@@ -653,7 +694,7 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req, res) => {
 // GET /v1/agents/:id/balance
 // Returns ETH and MockUSDC balances for a managed agent wallet
 // -------------------------------------------------------------------
-app.get('/v1/agents/:id/balance', async (req, res) => {
+app.get('/v1/agents/:id/balance', requireApiKey, async (req, res) => {
     const { id } = req.params;
     const agent = (0, storage_1.findAgentById)(id);
     if (!agent) {
@@ -679,10 +720,34 @@ app.get('/v1/agents/:id/balance', async (req, res) => {
 });
 // -------------------------------------------------------------------
 // GET /health
-// Lightweight liveness probe for Railway healthchecks — no RPC calls
+// Full liveness + readiness probe — checks RPC connectivity and storage.
+// Returns 200 when all subsystems are healthy, 503 when any check fails.
 // -------------------------------------------------------------------
-app.get('/health', (_req, res) => {
-    res.json({ ok: true });
+app.get('/health', async (_req, res) => {
+    const checks = {};
+    // Verify RPC connectivity with a short timeout so a stalled node
+    // does not block Railway's healthcheck and cause a false-positive restart.
+    try {
+        await Promise.race([
+            contracts_1.provider.getBlockNumber(),
+            new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000)),
+        ]);
+        checks.rpc = 'ok';
+    }
+    catch {
+        checks.rpc = 'error';
+    }
+    // Verify storage is reachable — a SQLite read failure here means the
+    // DB file is corrupted or the data directory has a permission issue.
+    try {
+        (0, storage_1.readAgents)();
+        checks.storage = 'ok';
+    }
+    catch {
+        checks.storage = 'error';
+    }
+    const allOk = Object.values(checks).every((v) => v === 'ok');
+    res.status(allOk ? 200 : 503).json({ ok: allOk, checks });
 });
 // -------------------------------------------------------------------
 // GET /dashboard/stats  (internal — used only by the dashboard UI)
@@ -709,16 +774,33 @@ app.get('/dashboard', (req, res) => {
     // mixed-content errors when Railway terminates TLS at the proxy layer).
     const apiBase = '';
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send((0, dashboard_1.getDashboardHtml)(apiBase));
+    res.send((0, dashboard_1.getDashboardHtml)(apiBase, BASESCAN_BASE));
 });
 // -------------------------------------------------------------------
-// Server startup
+// Server startup + graceful shutdown
 // -------------------------------------------------------------------
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Agent Settlement API running on http://localhost:${PORT}`);
     console.log(`Network: ${contracts_1.manifest.network} (chainId ${contracts_1.manifest.chainId})`);
     console.log(`AgentJobManager: ${contracts_1.manifest.contracts.AgentJobManager.address}`);
     console.log(`MockUSDC:        ${contracts_1.manifest.contracts.MockUSDC.address}`);
 });
+// Railway sends SIGTERM before killing the container.
+// We wait for in-flight requests to drain (max 10 s) before exiting
+// so background blockchain handlers are not cut off mid-transaction.
+const shutdown = (signal) => {
+    console.log(`[shutdown] Received ${signal}, closing server…`);
+    server.close(() => {
+        console.log('[shutdown] HTTP server closed.');
+        process.exit(0);
+    });
+    // Force exit if the server has not drained within 10 s
+    setTimeout(() => {
+        console.error('[shutdown] Forced exit after 10s timeout');
+        process.exit(1);
+    }, 10_000);
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 exports.default = app;
 //# sourceMappingURL=index.js.map

@@ -1,6 +1,24 @@
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 dotenv.config({ path: path.join(process.cwd(), '..', '.env') })
+
+// -------------------------------------------------------------------
+// Fail fast on missing critical configuration.
+// Railway will surface the exit code in its deploy logs, making the
+// root cause immediately obvious rather than buried in a stack trace.
+// -------------------------------------------------------------------
+
+const REQUIRED_ENV_VARS = ['BASE_SEPOLIA_RPC_URL', 'WALLET_ENCRYPTION_KEY'] as const
+const missingVars = REQUIRED_ENV_VARS.filter((v) => !process.env[v])
+if (missingVars.length > 0) {
+  console.error(`[startup] Missing required environment variables: ${missingVars.join(', ')}`)
+  process.exit(1)
+}
+// PRIVATE_KEY is optional — faucet and evaluator seeding are disabled without it
+if (!process.env.PRIVATE_KEY) {
+  console.warn('[startup] PRIVATE_KEY not set — faucet and agent seeding disabled')
+}
+
 import express, { Request, Response, NextFunction } from 'express'
 import bodyParser from 'body-parser'
 import cors from 'cors'
@@ -17,10 +35,12 @@ import {
   findJobById,
   findJobsByAgentId,
   updateJobStatus,
+  readAgents,
 } from './storage'
 import { generateWallet, walletFromEncrypted } from './wallet'
 import {
   provider,
+  primaryProvider,
   manifest,
   getJobManagerReadOnly,
   getJobManagerWithSigner,
@@ -46,17 +66,33 @@ process.on('uncaughtException', (err) => {
 })
 
 // -------------------------------------------------------------------
+// Network-aware constants
+// -------------------------------------------------------------------
+
+const NETWORK = process.env.NETWORK ?? 'testnet'
+const BASESCAN_BASE = NETWORK === 'mainnet'
+  ? 'https://basescan.org'
+  : 'https://sepolia.basescan.org'
+
+// -------------------------------------------------------------------
 // App setup
 // -------------------------------------------------------------------
 
 const app = express()
 
-// CORS — open during testnet/developer-testing phase
-// Tighten to specific origins before production
-app.use(cors())
+// Body limit — protects against oversized malicious payloads that could
+// exhaust memory before the JSON parser even finishes.
+app.use(bodyParser.json({ limit: '10kb' }))
 
 // Security headers (XSS protection, content-type sniffing, etc.)
 app.use(helmet())
+
+// CORS — configurable via env var so testnet stays open for developer
+// testing while mainnet can be locked to known frontend origins.
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : '*'
+app.use(cors(allowedOrigins === '*' ? undefined : { origin: allowedOrigins }))
 
 // IP-based rate limiting — 120 requests / 15 min per IP
 const limiter = rateLimit({
@@ -68,7 +104,17 @@ const limiter = rateLimit({
 })
 app.use(limiter)
 
-app.use(bodyParser.json())
+// Stricter per-route limiter for agent creation.
+// FINDING-002 fix: each agent creation triggers a deployer ETH seed transfer.
+// Without this limiter, an attacker can drain the deployer at 120 × 0.001 ETH
+// per 15 minutes per IP. Capped here at 3 agents/hour/IP to bound drain rate.
+const agentCreationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Agent creation limit reached. Max 3 per hour per IP.', code: 'RATE_LIMITED' },
+})
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
 
@@ -86,7 +132,7 @@ function apiError(res: Response, status: number, code: string, message: string):
 }
 
 function basescanTx(txHash: string): string {
-  return `https://sepolia.basescan.org/tx/${txHash}`
+  return `${BASESCAN_BASE}/tx/${txHash}`
 }
 
 // Wraps any promise with a hard timeout so blockchain calls never hang forever.
@@ -203,12 +249,14 @@ const AGENT_SEED_ETH = ethers.parseEther('0.001')
 
 // Singleton deployer wallet — reused across all seed calls so ethers.js
 // manages the nonce internally and avoids reuse on concurrent requests.
+// Uses primaryProvider (a plain JsonRpcProvider) because ethers.Wallet
+// requires a concrete provider that can sign and broadcast transactions.
 let _deployerWallet: ethers.Wallet | null = null
 function getDeployerWallet(): ethers.Wallet | null {
   if (_deployerWallet) return _deployerWallet
   const privateKey = process.env.PRIVATE_KEY
   if (!privateKey) return null
-  _deployerWallet = new ethers.Wallet(privateKey, provider)
+  _deployerWallet = new ethers.Wallet(privateKey, primaryProvider)
   return _deployerWallet
 }
 
@@ -220,7 +268,7 @@ async function seedAgentWallet(agentAddress: string): Promise<void> {
     const deployer = getDeployerWallet()
     if (!deployer) return
     try {
-      const balance = await provider.getBalance(deployer.address)
+      const balance = await primaryProvider.getBalance(deployer.address)
       if (balance < AGENT_SEED_ETH) {
         console.warn(`Deployer balance too low to seed agent wallet ${agentAddress}`)
         return
@@ -235,7 +283,7 @@ async function seedAgentWallet(agentAddress: string): Promise<void> {
   await _seedQueue
 }
 
-app.post('/v1/agents', async (req: Request, res: Response) => {
+app.post('/v1/agents', agentCreationLimiter, async (req: Request, res: Response) => {
   const { name } = req.body as { name?: unknown }
 
   if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -300,11 +348,12 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
   }
 
   try {
-    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+    // Wallet signers require a JsonRpcProvider — use primaryProvider here
+    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
     const jobManager = getJobManagerWithSigner(signer)
 
     // Track nonce manually to avoid stale-nonce errors on L2 RPC nodes
-    let nonce = await provider.getTransactionCount(await signer.getAddress(), 'pending')
+    let nonce = await primaryProvider.getTransactionCount(await signer.getAddress(), 'pending')
 
     const budgetWei = ethers.parseUnits(budget, USDC_DECIMALS)
     // Deadline is a Unix timestamp — contract checks deadline > block.timestamp
@@ -417,7 +466,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
   // Fail fast: check the agent wallet has enough USDC before going async.
   // Avoids the confusing "job stays open forever" symptom when USDC is missing.
   try {
-    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
     const agentAddress = await signer.getAddress()
     const budgetWei = ethers.parseUnits(job.budget, USDC_DECIMALS)
     const usdcBalance = await getMockUSDCReadOnly().balanceOf(agentAddress)
@@ -439,7 +488,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
   setImmediate(async () => {
     console.log(`[fund] Background handler started for job ${id}`)
     try {
-      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
       const usdc = getMockUSDCWithSigner(signer)
       const jobManager = getJobManagerWithSigner(signer)
 
@@ -449,7 +498,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
 
       console.log(`[fund] Wallet ${agentAddress}, budget ${job.budget} USDC`)
 
-      let nonce = await provider.getTransactionCount(agentAddress, 'pending')
+      let nonce = await primaryProvider.getTransactionCount(agentAddress, 'pending')
       console.log(`[fund] Starting nonce: ${nonce}`)
 
       // Approve the maximum possible amount so the agent never needs a second approval
@@ -521,7 +570,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
   setImmediate(async () => {
     console.log(`[submit] Background handler started for job ${id}`)
     try {
-      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
       const jobManager = getJobManagerWithSigner(signer)
       const providerAddress = await signer.getAddress()
       console.log(`[submit] Provider wallet: ${providerAddress}`)
@@ -532,7 +581,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
       console.log(`[submit] Deliverable hash: ${deliverableHash}`)
 
       const onChainJobId = BigInt(id)
-      const nonce = await provider.getTransactionCount(providerAddress, 'pending')
+      const nonce = await primaryProvider.getTransactionCount(providerAddress, 'pending')
       console.log(`[submit] Nonce: ${nonce}`)
       console.log(`[submit] Estimating gas for submit()…`)
       const gasEstimate = await jobManager.submit.estimateGas(onChainJobId, deliverableHash)
@@ -603,7 +652,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
       const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
 
       const onChainJobId = BigInt(id)
-      const nonce = await provider.getTransactionCount(evaluatorAddress, 'pending')
+      const nonce = await primaryProvider.getTransactionCount(evaluatorAddress, 'pending')
       console.log(`[complete] Nonce: ${nonce}`)
       console.log(`[complete] Estimating gas for complete()…`)
       const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes)
@@ -632,7 +681,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
 // receiving a 202 from fund/submit/complete (which process in background).
 // -------------------------------------------------------------------
 
-app.get('/v1/jobs/:id', async (req: Request<{ id: string }>, res: Response) => {
+app.get('/v1/jobs/:id', requireApiKey, async (req: Request<{ id: string }>, res: Response) => {
   const job = findJobById(req.params.id)
   if (!job) {
     apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`)
@@ -711,7 +760,7 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req: Request<{ id: string 
     const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
 
     const onChainJobId = BigInt(id)
-    const nonce = await provider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending')
+    const nonce = await primaryProvider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending')
     const gasEstimate = await jobManager.reject.estimateGas(onChainJobId, reasonBytes)
     const rejectTx = await jobManager.reject(onChainJobId, reasonBytes, {
       gasLimit: (gasEstimate * 120n) / 100n, nonce,
@@ -742,7 +791,7 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req: Request<{ id: string 
 // Returns ETH and MockUSDC balances for a managed agent wallet
 // -------------------------------------------------------------------
 
-app.get('/v1/agents/:id/balance', async (req: Request<{ id: string }>, res: Response) => {
+app.get('/v1/agents/:id/balance', requireApiKey, async (req: Request<{ id: string }>, res: Response) => {
   const { id } = req.params
 
   const agent = findAgentById(id)
@@ -771,11 +820,36 @@ app.get('/v1/agents/:id/balance', async (req: Request<{ id: string }>, res: Resp
 
 // -------------------------------------------------------------------
 // GET /health
-// Lightweight liveness probe for Railway healthchecks — no RPC calls
+// Full liveness + readiness probe — checks RPC connectivity and storage.
+// Returns 200 when all subsystems are healthy, 503 when any check fails.
 // -------------------------------------------------------------------
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ ok: true })
+app.get('/health', async (_req: Request, res: Response) => {
+  const checks: Record<string, 'ok' | 'error'> = {}
+
+  // Verify RPC connectivity with a short timeout so a stalled node
+  // does not block Railway's healthcheck and cause a false-positive restart.
+  try {
+    await Promise.race([
+      provider.getBlockNumber(),
+      new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000)),
+    ])
+    checks.rpc = 'ok'
+  } catch {
+    checks.rpc = 'error'
+  }
+
+  // Verify storage is reachable — a SQLite read failure here means the
+  // DB file is corrupted or the data directory has a permission issue.
+  try {
+    readAgents()
+    checks.storage = 'ok'
+  } catch {
+    checks.storage = 'error'
+  }
+
+  const allOk = Object.values(checks).every((v) => v === 'ok')
+  res.status(allOk ? 200 : 503).json({ ok: allOk, checks })
 })
 
 // -------------------------------------------------------------------
@@ -808,18 +882,37 @@ app.get('/dashboard', (req: Request, res: Response) => {
   // mixed-content errors when Railway terminates TLS at the proxy layer).
   const apiBase = ''
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
-  res.send(getDashboardHtml(apiBase))
+  res.send(getDashboardHtml(apiBase, BASESCAN_BASE))
 })
 
 // -------------------------------------------------------------------
-// Server startup
+// Server startup + graceful shutdown
 // -------------------------------------------------------------------
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Agent Settlement API running on http://localhost:${PORT}`)
   console.log(`Network: ${manifest.network} (chainId ${manifest.chainId})`)
   console.log(`AgentJobManager: ${manifest.contracts.AgentJobManager.address}`)
   console.log(`MockUSDC:        ${manifest.contracts.MockUSDC.address}`)
 })
+
+// Railway sends SIGTERM before killing the container.
+// We wait for in-flight requests to drain (max 10 s) before exiting
+// so background blockchain handlers are not cut off mid-transaction.
+const shutdown = (signal: string): void => {
+  console.log(`[shutdown] Received ${signal}, closing server…`)
+  server.close(() => {
+    console.log('[shutdown] HTTP server closed.')
+    process.exit(0)
+  })
+  // Force exit if the server has not drained within 10 s
+  setTimeout(() => {
+    console.error('[shutdown] Forced exit after 10s timeout')
+    process.exit(1)
+  }, 10_000)
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT',  () => shutdown('SIGINT'))
 
 export default app

@@ -23,6 +23,10 @@ const config: HardhatUserConfig = {
         // Plus la valeur est haute, plus les appels sont bon marché mais le déploiement coûte plus.
         runs: 200,
       },
+      // viaIR: required to resolve "stack too deep" in complex functions (AgentJobManager.complete)
+      // that use gas-capped external calls ({gas: 50_000}). The IR pipeline enables more
+      // aggressive stack optimization without changing runtime behavior.
+      viaIR: true,
       // OpenZeppelin 5.6.x uses the mcopy opcode which requires the Cancun EVM version.
       // Base and Ethereum mainnet both support Cancun (post-Dencun upgrade, March 2024).
       evmVersion: "cancun",

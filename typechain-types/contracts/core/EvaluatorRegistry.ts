@@ -27,6 +27,7 @@ export interface EvaluatorRegistryInterface extends Interface {
   getFunction(
     nameOrSignature:
       | "GOVERNANCE_DELAY"
+      | "MAX_ACTIVE_EVALUATORS"
       | "MAX_WARMUP_PERIOD"
       | "assignEvaluator"
       | "cancelProposal"
@@ -42,8 +43,10 @@ export interface EvaluatorRegistryInterface extends Interface {
       | "proposeMinEvaluatorStake"
       | "protocolToken"
       | "renounceOwnership"
+      | "setSlashPaused"
       | "setWarmupPeriod"
       | "slash"
+      | "slashPaused"
       | "stake"
       | "transferOwnership"
       | "unstake"
@@ -61,6 +64,7 @@ export interface EvaluatorRegistryInterface extends Interface {
       | "MinStakeProposed"
       | "OwnershipTransferred"
       | "ProposalCancelled"
+      | "SlashPauseUpdated"
       | "Staked"
       | "Unstaked"
       | "WarmupPeriodUpdated"
@@ -68,6 +72,10 @@ export interface EvaluatorRegistryInterface extends Interface {
 
   encodeFunctionData(
     functionFragment: "GOVERNANCE_DELAY",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "MAX_ACTIVE_EVALUATORS",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -128,12 +136,20 @@ export interface EvaluatorRegistryInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "setSlashPaused",
+    values: [boolean]
+  ): string;
+  encodeFunctionData(
     functionFragment: "setWarmupPeriod",
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "slash",
     values: [AddressLike, BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "slashPaused",
+    values?: undefined
   ): string;
   encodeFunctionData(functionFragment: "stake", values: [BigNumberish]): string;
   encodeFunctionData(
@@ -151,6 +167,10 @@ export interface EvaluatorRegistryInterface extends Interface {
 
   decodeFunctionResult(
     functionFragment: "GOVERNANCE_DELAY",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "MAX_ACTIVE_EVALUATORS",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -202,10 +222,18 @@ export interface EvaluatorRegistryInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "setSlashPaused",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "setWarmupPeriod",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "slash", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "slashPaused",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "stake", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "transferOwnership",
@@ -352,6 +380,18 @@ export namespace ProposalCancelledEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace SlashPauseUpdatedEvent {
+  export type InputTuple = [paused: boolean];
+  export type OutputTuple = [paused: boolean];
+  export interface OutputObject {
+    paused: boolean;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace StakedEvent {
   export type InputTuple = [
     evaluator: AddressLike,
@@ -453,6 +493,8 @@ export interface EvaluatorRegistry extends BaseContract {
 
   GOVERNANCE_DELAY: TypedContractMethod<[], [bigint], "view">;
 
+  MAX_ACTIVE_EVALUATORS: TypedContractMethod<[], [bigint], "view">;
+
   MAX_WARMUP_PERIOD: TypedContractMethod<[], [bigint], "view">;
 
   assignEvaluator: TypedContractMethod<
@@ -503,6 +545,8 @@ export interface EvaluatorRegistry extends BaseContract {
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
 
+  setSlashPaused: TypedContractMethod<[paused: boolean], [void], "nonpayable">;
+
   setWarmupPeriod: TypedContractMethod<
     [newPeriod: BigNumberish],
     [void],
@@ -514,6 +558,8 @@ export interface EvaluatorRegistry extends BaseContract {
     [void],
     "nonpayable"
   >;
+
+  slashPaused: TypedContractMethod<[], [boolean], "view">;
 
   stake: TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
@@ -533,6 +579,9 @@ export interface EvaluatorRegistry extends BaseContract {
 
   getFunction(
     nameOrSignature: "GOVERNANCE_DELAY"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "MAX_ACTIVE_EVALUATORS"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "MAX_WARMUP_PERIOD"
@@ -580,6 +629,9 @@ export interface EvaluatorRegistry extends BaseContract {
     nameOrSignature: "renounceOwnership"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "setSlashPaused"
+  ): TypedContractMethod<[paused: boolean], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "setWarmupPeriod"
   ): TypedContractMethod<[newPeriod: BigNumberish], [void], "nonpayable">;
   getFunction(
@@ -589,6 +641,9 @@ export interface EvaluatorRegistry extends BaseContract {
     [void],
     "nonpayable"
   >;
+  getFunction(
+    nameOrSignature: "slashPaused"
+  ): TypedContractMethod<[], [boolean], "view">;
   getFunction(
     nameOrSignature: "stake"
   ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
@@ -664,6 +719,13 @@ export interface EvaluatorRegistry extends BaseContract {
     ProposalCancelledEvent.InputTuple,
     ProposalCancelledEvent.OutputTuple,
     ProposalCancelledEvent.OutputObject
+  >;
+  getEvent(
+    key: "SlashPauseUpdated"
+  ): TypedContractEvent<
+    SlashPauseUpdatedEvent.InputTuple,
+    SlashPauseUpdatedEvent.OutputTuple,
+    SlashPauseUpdatedEvent.OutputObject
   >;
   getEvent(
     key: "Staked"
@@ -785,6 +847,17 @@ export interface EvaluatorRegistry extends BaseContract {
       ProposalCancelledEvent.InputTuple,
       ProposalCancelledEvent.OutputTuple,
       ProposalCancelledEvent.OutputObject
+    >;
+
+    "SlashPauseUpdated(bool)": TypedContractEvent<
+      SlashPauseUpdatedEvent.InputTuple,
+      SlashPauseUpdatedEvent.OutputTuple,
+      SlashPauseUpdatedEvent.OutputObject
+    >;
+    SlashPauseUpdated: TypedContractEvent<
+      SlashPauseUpdatedEvent.InputTuple,
+      SlashPauseUpdatedEvent.OutputTuple,
+      SlashPauseUpdatedEvent.OutputObject
     >;
 
     "Staked(address,uint256,uint256)": TypedContractEvent<

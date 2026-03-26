@@ -45,7 +45,8 @@ async function deployFixture() {
   const manager = (await AgentJobManagerFactory.deploy(
     await registry.getAddress(),
     FEE_RATE,
-    deployer.address,  // feeRecipient
+    deployer.address,          // feeRecipient
+    ethers.ZeroAddress,        // _reputationBridge — not wired in unit tests
     [await usdc.getAddress()]  // _initialAllowedTokens — FINDING-007
   )) as AgentJobManager;
   await manager.waitForDeployment();

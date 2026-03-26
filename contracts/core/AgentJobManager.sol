@@ -80,6 +80,25 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice Minimum time between job creation and deadline.
     uint64 public constant MIN_DEADLINE_OFFSET = 5 minutes;
 
+    /// @notice Minimum budget to ensure fee calculation is non-zero at maximum fee rate (500 bps).
+    /// @dev At 500 bps, a budget of 10_000 yields a fee of 5 (minimum 1 token unit).
+    ///      This protects against budgets so small that the protocol collects zero fee regardless
+    ///      of feeRate setting. 10_000 = 0.01 USDC (6 decimals).
+    ///      Rounding note: fee = budget * feeRate / 10000. At feeRate=1, budget=9999 → fee=0.
+    ///      MIN_BUDGET ensures fee >= 1 at any valid feeRate (1..500).
+    uint128 public constant MIN_BUDGET = 10_000;
+
+    /// @notice Minimum time the Evaluator has to evaluate after a Provider submission.
+    /// @dev FINDING #3: prevents the following griefing attack:
+    ///      1. Client sets a tight deadline (e.g. 10 minutes)
+    ///      2. Provider submits at the last second
+    ///      3. Evaluator cannot evaluate in time (network latency, off-chain verification)
+    ///      4. Client calls claimExpired() and recovers funds despite a valid submission
+    ///      When submit() is called and less than MIN_EVALUATION_WINDOW remains before the
+    ///      deadline, the deadline is automatically extended to block.timestamp + MIN_EVALUATION_WINDOW.
+    ///      24 hours is chosen as a reasonable evaluation window for off-chain AI tasks.
+    uint256 public constant MIN_EVALUATION_WINDOW = 24 hours;
+
     /// @notice Mandatory delay between a governance proposal and its execution.
     /// @dev FINDING-005 (centralisation): a 2-day window lets stakeholders detect and
     ///      react to malicious or mistaken governance changes before they take effect.
@@ -87,8 +106,9 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      via a fee manipulation in less than 2 days — giving time for an emergency
     ///      multisig rotation or a community response.
     ///      Applies to: setFeeRate and setFeeRecipient.
-    ///      Does NOT apply to: setReputationBridge (no fund flow impact),
-    ///      allowToken/disallowToken (maintenance operations, not financial).
+    ///      Does NOT apply to: allowToken/disallowToken (maintenance operations, not financial).
+    ///      FINDING-001 fix: now also applies to setReputationBridge — a malicious bridge can
+    ///      grief evaluator gas on complete()/reject(); the 2-day window allows detection.
     uint256 public constant GOVERNANCE_DELAY = 2 days;
 
     // ─── Immutables ───────────────────────────────────────────────────────────
@@ -121,9 +141,6 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice All jobs, keyed by job ID.
     mapping(uint256 => Job) private jobs;
 
-    /// @notice Tracks which job IDs have been created (to distinguish "not found" from "ID 0").
-    mapping(uint256 => bool) private jobExists;
-
     /// @notice Pending refunds per (client address, token address).
     /// @dev Pull over Push: refunds are accumulated here and claimed via claimRefund().
     ///      Using a nested mapping (client => token => amount) allows a single client
@@ -154,11 +171,14 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     // ─── Events not in interface (implementation-specific) ───────────────────
 
+    /// @notice Emitted when a reputationBridge change is proposed, before the delay elapses.
+    event ReputationBridgeProposed(address indexed newBridge, uint256 executableAt);
+
     /**
-     * @notice Emitted when the reputationBridge address is updated.
+     * @notice Emitted when the reputationBridge address is updated after the delay.
      * @dev address(0) means reputation forwarding is disabled.
      */
-    event ReputationBridgeUpdated(address indexed newBridge);
+    event ReputationBridgeUpdated(address indexed oldBridge, address indexed newBridge);
 
     // ── Governance timelock events ────────────────────────────────────────────
 
@@ -185,11 +205,9 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice Emitted when a token is removed from the payment whitelist.
     event TokenDisallowed(address indexed token);
 
-    /**
-     * @notice Emitted when a Client extends the deadline of a Funded or Submitted job.
-     * @dev Both old and new deadlines are logged so indexers can track the full history.
-     */
-    event DeadlineExtended(uint256 indexed jobId, uint64 oldDeadline, uint64 newDeadline);
+    // DeadlineExtended is declared in IAgentJobManager and inherited — not redeclared here.
+    // It is emitted by both extendDeadline() (voluntary, client-initiated) and
+    // submit() (automatic, when less than MIN_EVALUATION_WINDOW remains before deadline).
 
     /**
      * @notice Emitted when a Client reopens a Rejected job for a new execution attempt.
@@ -206,6 +224,10 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /// @notice Thrown when the fee rate exceeds MAX_FEE_RATE.
     error FeeRateExceedsMaximum(uint256 provided, uint256 maximum);
+
+    // ── Security finding errors are declared in IAgentJobManager (interface) ─
+    // EvaluatorNotEligible and BudgetBelowMinimum are inherited from IAgentJobManager.
+    // Do not redeclare them here — Solidity inherits errors from interfaces.
 
     // ── Governance timelock errors ────────────────────────────────────────────
 
@@ -260,10 +282,14 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /**
      * @dev Reverts with JobNotFound if the job ID does not exist.
-     *      Used on all functions that operate on an existing job.
+     *      Sentinel: jobs[jobId].client is always set to msg.sender (non-zero) in createJob(),
+     *      so address(0) unambiguously means the job was never created. This replaces the
+     *      former jobExists mapping, saving 1 SSTORE (20 000 gas) per job creation while
+     *      providing equivalent safety: job IDs start at 1 (nextJobId = 1 in constructor),
+     *      so jobId 0 always has client == address(0) and correctly fails this check.
      */
     modifier jobMustExist(uint256 jobId) {
-        if (!jobExists[jobId]) revert JobNotFound(jobId);
+        if (jobs[jobId].client == address(0)) revert JobNotFound(jobId);
         _;
     }
 
@@ -282,10 +308,19 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      *      deployment. Without this parameter, no token would be whitelisted at
      *      construction and createJob() would immediately revert for every caller —
      *      making the contract unusable before the owner calls allowToken() manually.
+     *
+     *      _reputationBridge is optional at construction (address(0) is valid).
+     *      Accepting it at construction time is safer than requiring a separate
+     *      setReputationBridge() call post-deployment: it makes the initial wiring
+     *      atomic and auditable in a single deployment transaction, reducing the
+     *      operational risk of a partially-configured protocol accepting jobs before
+     *      reputation recording is enabled.
      * @param _evaluatorRegistry      Address of the deployed EvaluatorRegistry contract.
      * @param _feeRate                Initial fee rate in basis points (100 = 1%).
      * @param _feeRecipient           Address that receives the protocol fee on complete().
      *                                Must be non-zero. Typically the ProtocolToken address.
+     * @param _reputationBridge       Address of the ReputationBridge contract, or address(0)
+     *                                to disable reputation forwarding at deployment.
      * @param _initialAllowedTokens   List of ERC-20 addresses to whitelist at deployment.
      *                                Zero addresses in the array are silently skipped.
      */
@@ -293,6 +328,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         address   _evaluatorRegistry,
         uint256   _feeRate,
         address   _feeRecipient,
+        address   _reputationBridge,
         address[] memory _initialAllowedTokens
     ) Ownable(msg.sender) {
         if (_evaluatorRegistry == address(0)) revert ZeroAddress("evaluatorRegistry");
@@ -301,11 +337,20 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // accepted, any job reaching Submitted state with feeRate > 0 would have its
         // funds permanently locked — complete() would revert on safeTransfer(address(0)).
         if (_feeRecipient == address(0)) revert ZeroAddress("feeRecipient");
+        // _reputationBridge may be address(0) — reputation forwarding is optional.
+        // No zero-check here is intentional: the bridge is an augmentation, not a
+        // safety-critical dependency. complete() and reject() skip the bridge call
+        // silently when reputationBridge == address(0).
 
         evaluatorRegistry = EvaluatorRegistry(_evaluatorRegistry);
         feeRate = _feeRate;
         feeRecipient = _feeRecipient;
+        reputationBridge = _reputationBridge;
         nextJobId = 1; // Start at 1 so that jobId 0 is always "invalid"
+
+        if (_reputationBridge != address(0)) {
+            emit ReputationBridgeUpdated(address(0), _reputationBridge);
+        }
 
         // FINDING-007: whitelist the initial tokens provided at deployment.
         // address(0) entries are silently skipped — they cannot be valid payment tokens
@@ -360,6 +405,18 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // The provider cannot be the evaluator — would allow self-evaluation of work.
         if (evaluator != address(0) && evaluator == provider) revert SelfAssignment("evaluator");
 
+        // FINDING #1: if an explicit evaluator is provided, verify they are registered and
+        // eligible in EvaluatorRegistry (i.e. their stake >= minEvaluatorStake and active == true).
+        // Without this check, a client could designate any address — including an unstaked
+        // accomplice — as evaluator, completely bypassing the cryptoeconomic security model.
+        // We prefer this slightly more complex check over the simpler "accept any non-zero address"
+        // because the security guarantee (staked evaluator = skin-in-the-game) is the protocol's
+        // core value proposition. A non-eligible evaluator cannot be slashed, making the
+        // evaluation worthless from a trust-minimization standpoint.
+        if (evaluator != address(0) && !evaluatorRegistry.isEligible(evaluator)) {
+            revert EvaluatorNotEligible(evaluator);
+        }
+
         // Deadline must be sufficiently in the future to give the provider time to work.
         if (deadline < uint64(block.timestamp) + MIN_DEADLINE_OFFSET) {
             revert DeadlineTooSoon(deadline, uint64(block.timestamp) + MIN_DEADLINE_OFFSET);
@@ -381,7 +438,6 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             deliverable: bytes32(0),
             reason:      bytes32(0)
         });
-        jobExists[jobId] = true;
 
         emit JobCreated(jobId, msg.sender, provider, evaluator, token, deadline);
     }
@@ -404,6 +460,15 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         if (msg.sender != job.client && msg.sender != job.provider) {
             revert NotAuthorized(msg.sender, jobId, "client or provider");
         }
+
+        // FINDING #4: enforce minimum budget so that fee calculation is non-zero at any valid
+        // feeRate. At feeRate=1 (0.01%), budget=9999 → fee = 9999*1/10000 = 0 (integer truncation).
+        // The protocol would settle a job for free. MIN_BUDGET = 10_000 ensures fee >= 1 at
+        // all governance-approved feeRates (1..500). Rounding always favors the provider
+        // (truncation toward zero), so the minimum is also provider-friendly.
+        // We choose the stricter check (BudgetBelowMinimum revert) over silently clamping the
+        // amount to MIN_BUDGET — silent clamping would mislead the client about their actual commitment.
+        if (amount < MIN_BUDGET) revert BudgetBelowMinimum(amount, MIN_BUDGET);
 
         // EFFECTS
         job.budget = amount;
@@ -478,6 +543,22 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         job.status = JobStatus.Submitted;
         job.deliverable = deliverable;
 
+        // FINDING #3: deadline griefing protection.
+        // If less than MIN_EVALUATION_WINDOW (24h) remains between now and the deadline,
+        // automatically extend the deadline to block.timestamp + MIN_EVALUATION_WINDOW.
+        // Without this guard, a client can set a tight deadline so that even a valid
+        // submission leaves the evaluator no time to act, then call claimExpired() to
+        // recover the funds while the provider gets nothing despite having delivered.
+        // We prefer the automatic extension over requiring the client to extend proactively,
+        // because a griefing client would never voluntarily extend — the protection must
+        // be enforced by the protocol itself.
+        uint64 currentDeadline = job.deadline;
+        if (block.timestamp + MIN_EVALUATION_WINDOW > currentDeadline) {
+            uint64 newDeadline = uint64(block.timestamp + MIN_EVALUATION_WINDOW);
+            job.deadline = newDeadline;
+            emit DeadlineExtended(jobId, currentDeadline, newDeadline);
+        }
+
         emit JobSubmitted(jobId, deliverable);
     }
 
@@ -545,7 +626,12 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // can never block settlement. Funds are always safe regardless of bridge state.
         address bridge = reputationBridge;
         if (bridge != address(0)) {
-            try IReputationBridge(bridge).recordJobOutcome(jobId, provider, evaluator, true, reason) {}
+            // FINDING-001 fix: cap gas forwarded to the bridge at 50 000 to prevent a
+            // malicious or misconfigured bridge from exhausting the evaluator's entire
+            // gas budget via an infinite loop. The try/catch already prevents reverts
+            // from blocking settlement; the gas cap closes the griefing vector.
+            // 50 000 gas is sufficient for a well-implemented bridge (two SSTOREs + event ≈ 30 000).
+            try IReputationBridge(bridge).recordJobOutcome{gas: 50_000}(jobId, provider, evaluator, true, reason) {}
             catch {}
         }
     }
@@ -622,7 +708,8 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // can never block settlement. Funds are always safe regardless of bridge state.
         address bridge = reputationBridge;
         if (bridge != address(0) && evaluatorInvolved) {
-            try IReputationBridge(bridge).recordJobOutcome(
+            // FINDING-001 fix: same 50 000 gas cap as in complete().
+            try IReputationBridge(bridge).recordJobOutcome{gas: 50_000}(
                 jobId,
                 job.provider,   // read from storage — job ref is still valid
                 job.evaluator,  // read from storage — job ref is still valid
@@ -998,20 +1085,47 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         emit TokenDisallowed(token);
     }
 
+    // ── Governance timelock: reputationBridge ─────────────────────────────────
+
     /**
-     * @notice Sets the ReputationBridge address for job outcome forwarding.
-     * @dev FINDING-002 fix: connects AgentJobManager to ReputationBridge.
-     *      address(0) is explicitly allowed to disable reputation forwarding
-     *      (e.g., during bridge migration or emergency pause). When address(0),
-     *      complete() and reject() skip the bridge call silently.
-     *      Setting a non-zero value immediately activates forwarding for all
-     *      future terminal job states.
-     * @param _bridge Address of the deployed ReputationBridge, or address(0) to disable.
+     * @notice Step 1 of 2 — proposes a new ReputationBridge address. Actual update is
+     *         delayed by GOVERNANCE_DELAY.
+     * @dev FINDING-001 fix: a malicious bridge forwarded from complete()/reject() can
+     *      exhaust evaluator gas (griefing attack even with try/catch + gas cap). Timelocking
+     *      the bridge pointer gives stakeholders 2 days to detect and cancel a malicious proposal.
+     *      address(0) is allowed — disabling is a valid emergency action and takes effect
+     *      immediately (no-op bridge calls already have no gas cost).
+     *      To disable immediately (emergency), propose(address(0)) then wait.
+     * @param _bridge Proposed ReputationBridge address, or address(0) to disable forwarding.
      */
-    function setReputationBridge(address _bridge) external onlyOwner {
-        // address(0) is intentionally allowed — disabling is a valid governance action.
+    function proposeReputationBridge(address _bridge) external onlyOwner {
+        bytes32 key = keccak256("reputationBridge");
+        uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
+        pendingChanges[key] = PendingChange({
+            valueHash:    keccak256(abi.encode(_bridge)),
+            executableAt: executableAt
+        });
+        emit ReputationBridgeProposed(_bridge, executableAt);
+    }
+
+    /**
+     * @notice Step 2 of 2 — executes a previously proposed ReputationBridge change.
+     * @dev Must be called after GOVERNANCE_DELAY has elapsed since proposeReputationBridge().
+     *      The value must match exactly what was proposed.
+     * @param _bridge Must match the address passed to the corresponding proposeReputationBridge().
+     */
+    function executeReputationBridge(address _bridge) external onlyOwner {
+        bytes32 key = keccak256("reputationBridge");
+        PendingChange storage p = pendingChanges[key];
+
+        if (p.executableAt == 0) revert NoProposalPending(key);
+        if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
+        if (p.valueHash != keccak256(abi.encode(_bridge))) revert ProposalValueMismatch();
+
+        delete pendingChanges[key]; // CEI: clear before applying the change
+        address oldBridge = reputationBridge;
         reputationBridge = _bridge;
-        emit ReputationBridgeUpdated(_bridge);
+        emit ReputationBridgeUpdated(oldBridge, _bridge);
     }
 
     // ─── View functions ───────────────────────────────────────────────────────
@@ -1023,7 +1137,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      * @return The full Job struct at the time of the call.
      */
     function getJob(uint256 jobId) external view returns (Job memory) {
-        if (!jobExists[jobId]) revert JobNotFound(jobId);
+        if (jobs[jobId].client == address(0)) revert JobNotFound(jobId);
         return jobs[jobId];
     }
 

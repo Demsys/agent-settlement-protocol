@@ -69,6 +69,7 @@ async function fullDeployFixture() {
     await registry.getAddress(),
     FEE_RATE,
     deployer.address,
+    ethers.ZeroAddress,        // _reputationBridge — wired post-deployment via setReputationBridge
     [await usdc.getAddress()]  // _initialAllowedTokens — FINDING-007
   )) as AgentJobManager;
   await manager.waitForDeployment();
