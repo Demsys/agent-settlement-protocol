@@ -32,6 +32,19 @@ import { getStats } from './stats'
 import { getDashboardHtml } from './dashboard'
 
 // -------------------------------------------------------------------
+// Global error safety net — catches any unhandled promise rejection or
+// synchronous exception that escapes the normal try/catch blocks.
+// Without this, Node.js silently ignores them (Node < 15) or crashes (Node 15+).
+// -------------------------------------------------------------------
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection]', reason, promise)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err)
+})
+
+// -------------------------------------------------------------------
 // App setup
 // -------------------------------------------------------------------
 
@@ -400,9 +413,30 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
     return
   }
 
+  // Fail fast: check the agent wallet has enough USDC before going async.
+  // Avoids the confusing "job stays open forever" symptom when USDC is missing.
+  try {
+    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+    const agentAddress = await signer.getAddress()
+    const budgetWei = ethers.parseUnits(job.budget, USDC_DECIMALS)
+    const usdcBalance = await getMockUSDCReadOnly().balanceOf(agentAddress)
+    if (usdcBalance < budgetWei) {
+      apiError(
+        res, 402, 'INSUFFICIENT_USDC',
+        `Agent wallet has ${ethers.formatUnits(usdcBalance, USDC_DECIMALS)} USDC but job budget is ${job.budget} USDC — call POST /v1/faucet/usdc first`,
+      )
+      return
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    apiError(res, 500, 'BLOCKCHAIN_ERROR', `Pre-flight check failed: ${message}`)
+    return
+  }
+
   res.status(202).json({ jobId: id, status: 'processing' })
 
   setImmediate(async () => {
+    console.log(`[fund] Background handler started for job ${id}`)
     try {
       const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
       const usdc = getMockUSDCWithSigner(signer)
@@ -412,29 +446,31 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
       const jobManagerAddress = manifest.contracts.AgentJobManager.address
       const agentAddress = await signer.getAddress()
 
-      // Mint MockUSDC to the agent wallet so it has funds to cover the job budget
-      let nonce = await provider.getTransactionCount(agentAddress, 'pending')
+      console.log(`[fund] Wallet ${agentAddress}, budget ${job.budget} USDC`)
 
-      const mintGas = await usdc.mint.estimateGas(agentAddress, budgetWei)
-      const mintTx = await usdc.mint(agentAddress, budgetWei, {
-        gasLimit: (mintGas * 120n) / 100n, nonce: nonce++,
-      })
-      await withTimeout(mintTx.wait(1), 'mint confirmation')
+      let nonce = await provider.getTransactionCount(agentAddress, 'pending')
+      console.log(`[fund] Starting nonce: ${nonce}`)
 
       // Approve the maximum possible amount so the agent never needs a second approval
-      // when creating more jobs with the same token — saves a transaction in the future
+      // when creating more jobs with the same token — saves a transaction in the future.
+      // Note: we do NOT mint here — the client must already hold USDC (use POST /v1/faucet/usdc).
+      console.log(`[fund] Step 1/2 — approving USDC allowance…`)
       const approveGas = await usdc.approve.estimateGas(jobManagerAddress, ethers.MaxUint256)
       const approveTx = await usdc.approve(jobManagerAddress, ethers.MaxUint256, {
         gasLimit: (approveGas * 120n) / 100n, nonce: nonce++,
       })
+      console.log(`[fund] approve tx sent: ${approveTx.hash}`)
       await withTimeout(approveTx.wait(1), 'approve confirmation')
+      console.log(`[fund] approve confirmed`)
 
       // Call fund() — passes expectedBudget so the contract can validate nothing changed
+      console.log(`[fund] Step 2/2 — calling fund()…`)
       const onChainJobId = BigInt(id)
       const fundGas = await jobManager.fund.estimateGas(onChainJobId, budgetWei)
       const fundTx = await jobManager.fund(onChainJobId, budgetWei, {
         gasLimit: (fundGas * 120n) / 100n, nonce: nonce++,
       })
+      console.log(`[fund] fund tx sent: ${fundTx.hash}`)
       const fundReceipt = await withTimeout(fundTx.wait(1), 'fund confirmation')
       if (!fundReceipt || fundReceipt.status === 0) {
         console.error(`[fund] Transaction reverted for job ${id}: ${basescanTx(fundTx.hash)}`)
