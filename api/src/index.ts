@@ -183,7 +183,7 @@ app.post('/v1/faucet/usdc', async (req: Request, res: Response) => {
 // -------------------------------------------------------------------
 
 // Amount of ETH sent to each new agent wallet — enough for ~50 txs on Base
-const AGENT_SEED_ETH = ethers.parseEther('0.005')
+const AGENT_SEED_ETH = ethers.parseEther('0.001')
 
 async function seedAgentWallet(agentAddress: string): Promise<void> {
   const privateKey = process.env.PRIVATE_KEY
