@@ -68,6 +68,7 @@ const BLOCKCHAIN_TIMEOUT_MS = 60_000
 // -------------------------------------------------------------------
 
 function apiError(res: Response, status: number, code: string, message: string): void {
+  console.error(`[apiError] ${status} ${code}: ${message}`)
   res.status(status).json({ error: message, code })
 }
 
