@@ -303,21 +303,24 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // Tell AgentJobManager the address of the ReputationBridge so it can
-  // forward completion and rejection outcomes to the ERC-8004 layer.
+  // Propose the ReputationBridge address on AgentJobManager.
+  // FINDING-001 fix: setReputationBridge is now timelocked (GOVERNANCE_DELAY = 2 days).
+  // This script calls proposeReputationBridge() which starts the countdown.
+  // After 2 days, run scripts/executeGovernance.ts to call executeReputationBridge().
   try {
     const agentJobManager = await ethers.getContractAt(
       "AgentJobManager",
       agentJobManagerAddress,
     )
-    const tx = await agentJobManager.setReputationBridge(reputationBridgeAddress, await getFreshGasOverrides())
+    const tx = await agentJobManager.proposeReputationBridge(reputationBridgeAddress, await getFreshGasOverrides())
     const receipt = await tx.wait(1)
     if (receipt === null || receipt.status === 0) {
-      throw new Error("setReputationBridge transaction failed (status 0)")
+      throw new Error("proposeReputationBridge transaction failed (status 0)")
     }
-    logConfig(`AgentJobManager.setReputationBridge(${reputationBridgeAddress})`, receipt.hash)
+    logConfig(`AgentJobManager.proposeReputationBridge(${reputationBridgeAddress}) — execute after 2-day GOVERNANCE_DELAY`, receipt.hash)
+    console.log("  ⚠  IMPORTANT: Run scripts/executeGovernance.ts after 2 days to call executeReputationBridge().")
   } catch (err) {
-    console.error("\n  ERROR: AgentJobManager.setReputationBridge() failed.")
+    console.error("\n  ERROR: AgentJobManager.proposeReputationBridge() failed.")
     console.error(err)
     process.exit(1)
   }
