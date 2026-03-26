@@ -73,7 +73,7 @@ const PORT = parseInt(process.env.PORT ?? '3000', 10)
 
 // Blockchain call timeout — transactions that are not confirmed within this
 // window are considered failed (avoids hanging forever on a slow RPC node).
-const BLOCKCHAIN_TIMEOUT_MS = 60_000
+const BLOCKCHAIN_TIMEOUT_MS = 90_000
 
 // -------------------------------------------------------------------
 // Helpers
@@ -518,20 +518,28 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
   res.status(202).json({ jobId: id, status: 'processing' })
 
   setImmediate(async () => {
+    console.log(`[submit] Background handler started for job ${id}`)
     try {
       const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
       const jobManager = getJobManagerWithSigner(signer)
+      const providerAddress = await signer.getAddress()
+      console.log(`[submit] Provider wallet: ${providerAddress}`)
 
       // ERC-8183 submit() expects a bytes32 hash of the deliverable, not the raw content.
       // The actual deliverable should be stored off-chain (IPFS, S3, etc.).
       const deliverableHash = ethers.keccak256(ethers.toUtf8Bytes(deliverable as string))
+      console.log(`[submit] Deliverable hash: ${deliverableHash}`)
 
       const onChainJobId = BigInt(id)
-      const nonce = await provider.getTransactionCount(await signer.getAddress(), 'pending')
+      const nonce = await provider.getTransactionCount(providerAddress, 'pending')
+      console.log(`[submit] Nonce: ${nonce}`)
+      console.log(`[submit] Estimating gas for submit()…`)
       const gasEstimate = await jobManager.submit.estimateGas(onChainJobId, deliverableHash)
+      console.log(`[submit] Gas estimate: ${gasEstimate}`)
       const submitTx = await jobManager.submit(onChainJobId, deliverableHash, {
         gasLimit: (gasEstimate * 120n) / 100n, nonce,
       })
+      console.log(`[submit] tx sent: ${submitTx.hash}`)
       const submitReceipt = await withTimeout(submitTx.wait(1), 'submit confirmation')
       if (!submitReceipt || submitReceipt.status === 0) {
         console.error(`[submit] Transaction reverted for job ${id}: ${basescanTx(submitTx.hash)}`)
@@ -582,8 +590,11 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
   res.status(202).json({ jobId: id, status: 'processing' })
 
   setImmediate(async () => {
+    console.log(`[complete] Background handler started for job ${id}`)
     try {
       const jobManager = getJobManagerWithSigner(evaluatorSigner)
+      const evaluatorAddress = await evaluatorSigner.getAddress()
+      console.log(`[complete] Evaluator wallet: ${evaluatorAddress}`)
 
       const reasonStr = typeof reason === 'string' ? reason : ''
       const reasonTruncated = reasonStr.length > 31
@@ -591,11 +602,15 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
       const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
 
       const onChainJobId = BigInt(id)
-      const nonce = await provider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending')
+      const nonce = await provider.getTransactionCount(evaluatorAddress, 'pending')
+      console.log(`[complete] Nonce: ${nonce}`)
+      console.log(`[complete] Estimating gas for complete()…`)
       const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes)
+      console.log(`[complete] Gas estimate: ${gasEstimate}`)
       const completeTx = await jobManager.complete(onChainJobId, reasonBytes, {
         gasLimit: (gasEstimate * 120n) / 100n, nonce,
       })
+      console.log(`[complete] tx sent: ${completeTx.hash}`)
       const completeReceipt = await withTimeout(completeTx.wait(1), 'complete confirmation')
       if (!completeReceipt || completeReceipt.status === 0) {
         console.error(`[complete] Transaction reverted for job ${id}: ${basescanTx(completeTx.hash)}`)
