@@ -26,7 +26,6 @@ import {
   getJobManagerWithSigner,
   getMockUSDCWithSigner,
   getMockUSDCReadOnly,
-  JOB_STATUS_MAP,
   USDC_DECIMALS,
 } from './contracts'
 import { getStats } from './stats'
@@ -155,27 +154,29 @@ app.post('/v1/faucet/usdc', async (req: Request, res: Response) => {
     return
   }
 
-  const privateKey = process.env.PRIVATE_KEY
-  if (!privateKey) {
+  if (!getDeployerWallet()) {
     apiError(res, 503, 'NO_DEPLOYER', 'Deployer key not configured')
     return
   }
 
-  try {
-    const deployer = new ethers.Wallet(privateKey, provider)
-    const usdc = getMockUSDCWithSigner(deployer)
-    const amountWei = ethers.parseUnits(amountStr, USDC_DECIMALS)
-    const tx = await usdc.mint(address, amountWei)
-    const receipt = await withTimeout(tx.wait(1), 'faucet mint')
-    if (!receipt || receipt.status === 0) {
-      apiError(res, 500, 'MINT_FAILED', 'Mint transaction reverted')
-      return
+  res.json({ address, amount: amountStr, status: 'processing' })
+
+  setImmediate(async () => {
+    try {
+      const deployer = getDeployerWallet()!
+      const usdc = getMockUSDCWithSigner(deployer)
+      const amountWei = ethers.parseUnits(amountStr, USDC_DECIMALS)
+      const tx = await usdc.mint(address, amountWei)
+      const receipt = await withTimeout(tx.wait(1), 'faucet mint')
+      if (!receipt || receipt.status === 0) {
+        console.error(`[faucet] Mint transaction reverted for ${address}`)
+        return
+      }
+      console.log(`[faucet] Minted ${amountStr} USDC to ${address} — ${basescanTx(tx.hash)}`)
+    } catch (err) {
+      console.error(`[faucet] Failed to mint USDC to ${address}:`, err)
     }
-    res.json({ address, amount: amountStr, txHash: tx.hash })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    apiError(res, 500, 'FAUCET_ERROR', message)
-  }
+  })
 })
 
 // -------------------------------------------------------------------
@@ -186,22 +187,38 @@ app.post('/v1/faucet/usdc', async (req: Request, res: Response) => {
 // Amount of ETH sent to each new agent wallet — enough for ~50 txs on Base
 const AGENT_SEED_ETH = ethers.parseEther('0.001')
 
-async function seedAgentWallet(agentAddress: string): Promise<void> {
+// Singleton deployer wallet — reused across all seed calls so ethers.js
+// manages the nonce internally and avoids reuse on concurrent requests.
+let _deployerWallet: ethers.Wallet | null = null
+function getDeployerWallet(): ethers.Wallet | null {
+  if (_deployerWallet) return _deployerWallet
   const privateKey = process.env.PRIVATE_KEY
-  if (!privateKey) return
-  try {
-    const deployer = new ethers.Wallet(privateKey, provider)
-    const balance = await provider.getBalance(deployer.address)
-    if (balance < AGENT_SEED_ETH) {
-      console.warn(`Deployer balance too low to seed agent wallet ${agentAddress}`)
-      return
+  if (!privateKey) return null
+  _deployerWallet = new ethers.Wallet(privateKey, provider)
+  return _deployerWallet
+}
+
+// Serial seed queue — prevents concurrent seed calls from colliding on nonce.
+let _seedQueue: Promise<void> = Promise.resolve()
+
+async function seedAgentWallet(agentAddress: string): Promise<void> {
+  _seedQueue = _seedQueue.then(async () => {
+    const deployer = getDeployerWallet()
+    if (!deployer) return
+    try {
+      const balance = await provider.getBalance(deployer.address)
+      if (balance < AGENT_SEED_ETH) {
+        console.warn(`Deployer balance too low to seed agent wallet ${agentAddress}`)
+        return
+      }
+      const tx = await deployer.sendTransaction({ to: agentAddress, value: AGENT_SEED_ETH })
+      await tx.wait(1)
+      console.log(`Seeded ${agentAddress} with ${ethers.formatEther(AGENT_SEED_ETH)} ETH`)
+    } catch (err) {
+      console.warn(`Failed to seed agent wallet ${agentAddress}:`, err)
     }
-    const tx = await deployer.sendTransaction({ to: agentAddress, value: AGENT_SEED_ETH })
-    await tx.wait(1)
-    console.log(`Seeded ${agentAddress} with ${ethers.formatEther(AGENT_SEED_ETH)} ETH`)
-  } catch (err) {
-    console.warn(`Failed to seed agent wallet ${agentAddress}:`, err)
-  }
+  })
+  await _seedQueue
 }
 
 app.post('/v1/agents', async (req: Request, res: Response) => {
@@ -383,56 +400,53 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
     return
   }
 
-  try {
-    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
-    const usdc = getMockUSDCWithSigner(signer)
-    const jobManager = getJobManagerWithSigner(signer)
+  res.status(202).json({ jobId: id, status: 'processing' })
 
-    const budgetWei = ethers.parseUnits(job.budget, USDC_DECIMALS)
-    const jobManagerAddress = manifest.contracts.AgentJobManager.address
-    const agentAddress = await signer.getAddress()
+  setImmediate(async () => {
+    try {
+      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+      const usdc = getMockUSDCWithSigner(signer)
+      const jobManager = getJobManagerWithSigner(signer)
 
-    // Mint MockUSDC to the agent wallet so it has funds to cover the job budget
-    let nonce = await provider.getTransactionCount(agentAddress, 'pending')
+      const budgetWei = ethers.parseUnits(job.budget, USDC_DECIMALS)
+      const jobManagerAddress = manifest.contracts.AgentJobManager.address
+      const agentAddress = await signer.getAddress()
 
-    const mintGas = await usdc.mint.estimateGas(agentAddress, budgetWei)
-    const mintTx = await usdc.mint(agentAddress, budgetWei, {
-      gasLimit: (mintGas * 120n) / 100n, nonce: nonce++,
-    })
-    await withTimeout(mintTx.wait(1), 'mint confirmation')
+      // Mint MockUSDC to the agent wallet so it has funds to cover the job budget
+      let nonce = await provider.getTransactionCount(agentAddress, 'pending')
 
-    // Approve the maximum possible amount so the agent never needs a second approval
-    // when creating more jobs with the same token — saves a transaction in the future
-    const approveGas = await usdc.approve.estimateGas(jobManagerAddress, ethers.MaxUint256)
-    const approveTx = await usdc.approve(jobManagerAddress, ethers.MaxUint256, {
-      gasLimit: (approveGas * 120n) / 100n, nonce: nonce++,
-    })
-    await withTimeout(approveTx.wait(1), 'approve confirmation')
+      const mintGas = await usdc.mint.estimateGas(agentAddress, budgetWei)
+      const mintTx = await usdc.mint(agentAddress, budgetWei, {
+        gasLimit: (mintGas * 120n) / 100n, nonce: nonce++,
+      })
+      await withTimeout(mintTx.wait(1), 'mint confirmation')
 
-    // Call fund() — passes expectedBudget so the contract can validate nothing changed
-    const onChainJobId = BigInt(id)
-    const fundGas = await jobManager.fund.estimateGas(onChainJobId, budgetWei)
-    const fundTx = await jobManager.fund(onChainJobId, budgetWei, {
-      gasLimit: (fundGas * 120n) / 100n, nonce: nonce++,
-    })
-    const fundReceipt = await withTimeout(fundTx.wait(1), 'fund confirmation')
-    if (!fundReceipt || fundReceipt.status === 0) {
-      apiError(res, 500, 'TX_FAILED', `fund transaction failed: ${basescanTx(fundTx.hash)}`)
-      return
+      // Approve the maximum possible amount so the agent never needs a second approval
+      // when creating more jobs with the same token — saves a transaction in the future
+      const approveGas = await usdc.approve.estimateGas(jobManagerAddress, ethers.MaxUint256)
+      const approveTx = await usdc.approve(jobManagerAddress, ethers.MaxUint256, {
+        gasLimit: (approveGas * 120n) / 100n, nonce: nonce++,
+      })
+      await withTimeout(approveTx.wait(1), 'approve confirmation')
+
+      // Call fund() — passes expectedBudget so the contract can validate nothing changed
+      const onChainJobId = BigInt(id)
+      const fundGas = await jobManager.fund.estimateGas(onChainJobId, budgetWei)
+      const fundTx = await jobManager.fund(onChainJobId, budgetWei, {
+        gasLimit: (fundGas * 120n) / 100n, nonce: nonce++,
+      })
+      const fundReceipt = await withTimeout(fundTx.wait(1), 'fund confirmation')
+      if (!fundReceipt || fundReceipt.status === 0) {
+        console.error(`[fund] Transaction reverted for job ${id}: ${basescanTx(fundTx.hash)}`)
+        return
+      }
+
+      updateJobStatus(id, 'funded', fundTx.hash)
+      console.log(`[fund] Job ${id} funded — ${basescanTx(fundTx.hash)}`)
+    } catch (err) {
+      console.error(`[fund] Failed to fund job ${id}:`, err)
     }
-
-    updateJobStatus(id, 'funded', fundTx.hash)
-
-    res.json({
-      jobId: id,
-      txHash: fundTx.hash,
-      basescanUrl: basescanTx(fundTx.hash),
-      status: 'funded',
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    apiError(res, 500, 'BLOCKCHAIN_ERROR', message)
-  }
+  })
 })
 
 // -------------------------------------------------------------------
@@ -465,39 +479,35 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
     return
   }
 
-  try {
-    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
-    const jobManager = getJobManagerWithSigner(signer)
+  res.status(202).json({ jobId: id, status: 'processing' })
 
-    // ERC-8183 submit() expects a bytes32 hash of the deliverable, not the raw content.
-    // The actual deliverable should be stored off-chain (IPFS, S3, etc.).
-    const deliverableHash = ethers.keccak256(ethers.toUtf8Bytes(deliverable))
+  setImmediate(async () => {
+    try {
+      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, provider)
+      const jobManager = getJobManagerWithSigner(signer)
 
-    const onChainJobId = BigInt(id)
-    const nonce = await provider.getTransactionCount(await signer.getAddress(), 'pending')
-    const gasEstimate = await jobManager.submit.estimateGas(onChainJobId, deliverableHash)
-    const submitTx = await jobManager.submit(onChainJobId, deliverableHash, {
-      gasLimit: (gasEstimate * 120n) / 100n, nonce,
-    })
-    const submitReceipt = await withTimeout(submitTx.wait(1), 'submit confirmation')
-    if (!submitReceipt || submitReceipt.status === 0) {
-      apiError(res, 500, 'TX_FAILED', `submit transaction failed: ${basescanTx(submitTx.hash)}`)
-      return
+      // ERC-8183 submit() expects a bytes32 hash of the deliverable, not the raw content.
+      // The actual deliverable should be stored off-chain (IPFS, S3, etc.).
+      const deliverableHash = ethers.keccak256(ethers.toUtf8Bytes(deliverable as string))
+
+      const onChainJobId = BigInt(id)
+      const nonce = await provider.getTransactionCount(await signer.getAddress(), 'pending')
+      const gasEstimate = await jobManager.submit.estimateGas(onChainJobId, deliverableHash)
+      const submitTx = await jobManager.submit(onChainJobId, deliverableHash, {
+        gasLimit: (gasEstimate * 120n) / 100n, nonce,
+      })
+      const submitReceipt = await withTimeout(submitTx.wait(1), 'submit confirmation')
+      if (!submitReceipt || submitReceipt.status === 0) {
+        console.error(`[submit] Transaction reverted for job ${id}: ${basescanTx(submitTx.hash)}`)
+        return
+      }
+
+      updateJobStatus(id, 'submitted', submitTx.hash)
+      console.log(`[submit] Job ${id} submitted — ${basescanTx(submitTx.hash)}`)
+    } catch (err) {
+      console.error(`[submit] Failed to submit job ${id}:`, err)
     }
-
-    updateJobStatus(id, 'submitted', submitTx.hash)
-
-    res.json({
-      jobId: id,
-      txHash: submitTx.hash,
-      basescanUrl: basescanTx(submitTx.hash),
-      status: 'submitted',
-      deliverableHash,
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    apiError(res, 500, 'BLOCKCHAIN_ERROR', message)
-  }
+  })
 })
 
 // -------------------------------------------------------------------
@@ -525,87 +535,58 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
     return
   }
 
-  try {
-    // complete() must be called by the evaluator — in this MVP the deployer wallet
-    // plays the evaluator role. Load it from PRIVATE_KEY env variable.
-    const evaluatorPrivateKey = process.env.PRIVATE_KEY
-    if (!evaluatorPrivateKey) {
-      apiError(res, 500, 'CONFIG_ERROR', 'PRIVATE_KEY not set — evaluator wallet unavailable')
-      return
-    }
-    const evaluatorSigner = new ethers.Wallet(evaluatorPrivateKey, provider)
-    const jobManager = getJobManagerWithSigner(evaluatorSigner)
-
-    const reasonStr = typeof reason === 'string' ? reason : ''
-    const reasonTruncated = reasonStr.length > 31
-    // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
-    const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
-
-    const onChainJobId = BigInt(id)
-    const nonce = await provider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending')
-    const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes)
-    const completeTx = await jobManager.complete(onChainJobId, reasonBytes, {
-      gasLimit: (gasEstimate * 120n) / 100n, nonce,
-    })
-    const completeReceipt = await withTimeout(completeTx.wait(1), 'complete confirmation')
-    if (!completeReceipt || completeReceipt.status === 0) {
-      apiError(res, 500, 'TX_FAILED', `complete transaction failed: ${basescanTx(completeTx.hash)}`)
-      return
-    }
-
-    updateJobStatus(id, 'completed', completeTx.hash)
-
-    res.json({
-      jobId: id,
-      txHash: completeTx.hash,
-      basescanUrl: basescanTx(completeTx.hash),
-      status: 'completed',
-      ...(reasonTruncated && { warning: 'reason was truncated to 31 characters for on-chain storage' }),
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    apiError(res, 500, 'BLOCKCHAIN_ERROR', message)
+  // complete() must be called by the evaluator — in this MVP the deployer wallet
+  // plays the evaluator role. Fail fast synchronously if the key is missing.
+  const evaluatorSigner = getDeployerWallet()
+  if (!evaluatorSigner) {
+    apiError(res, 500, 'CONFIG_ERROR', 'PRIVATE_KEY not set — evaluator wallet unavailable')
+    return
   }
+
+  res.status(202).json({ jobId: id, status: 'processing' })
+
+  setImmediate(async () => {
+    try {
+      const jobManager = getJobManagerWithSigner(evaluatorSigner)
+
+      const reasonStr = typeof reason === 'string' ? reason : ''
+      const reasonTruncated = reasonStr.length > 31
+      // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
+      const reasonBytes = ethers.encodeBytes32String(reasonStr.slice(0, 31))
+
+      const onChainJobId = BigInt(id)
+      const nonce = await provider.getTransactionCount(await evaluatorSigner.getAddress(), 'pending')
+      const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes)
+      const completeTx = await jobManager.complete(onChainJobId, reasonBytes, {
+        gasLimit: (gasEstimate * 120n) / 100n, nonce,
+      })
+      const completeReceipt = await withTimeout(completeTx.wait(1), 'complete confirmation')
+      if (!completeReceipt || completeReceipt.status === 0) {
+        console.error(`[complete] Transaction reverted for job ${id}: ${basescanTx(completeTx.hash)}`)
+        return
+      }
+
+      updateJobStatus(id, 'completed', completeTx.hash)
+      console.log(`[complete] Job ${id} completed — ${basescanTx(completeTx.hash)}${reasonTruncated ? ' (reason truncated)' : ''}`)
+    } catch (err) {
+      console.error(`[complete] Failed to complete job ${id}:`, err)
+    }
+  })
 })
 
 // -------------------------------------------------------------------
 // GET /v1/jobs/:id
-// Reads the live on-chain state of a job
+// Returns the stored job record — clients use this to poll status after
+// receiving a 202 from fund/submit/complete (which process in background).
 // -------------------------------------------------------------------
 
 app.get('/v1/jobs/:id', async (req: Request<{ id: string }>, res: Response) => {
-  const { id } = req.params
-
-  try {
-    const onChainJobId = BigInt(id)
-    const jobManager = getJobManagerReadOnly()
-    const jobData = await jobManager.getJob(onChainJobId)
-
-    const statusIndex = Number(jobData.status)
-    const statusLabel = JOB_STATUS_MAP[statusIndex] ?? 'unknown'
-
-    res.json({
-      jobId: id,
-      status: statusLabel,
-      client: jobData.client,
-      provider: jobData.provider,
-      evaluator: jobData.evaluator,
-      token: jobData.token,
-      budget: ethers.formatUnits(jobData.budget, USDC_DECIMALS),
-      deadline: new Date(Number(jobData.deadline) * 1000).toISOString(),
-      createdAt: new Date(Number(jobData.createdAt) * 1000).toISOString(),
-      deliverableHash: jobData.deliverable !== ethers.ZeroHash ? jobData.deliverable : null,
-      reason: jobData.reason !== ethers.ZeroHash ? ethers.decodeBytes32String(jobData.reason) : null,
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    // A BigInt conversion failure means the id is not a valid job ID
-    if (message.includes('Cannot convert') || message.includes('invalid BigInt')) {
-      apiError(res, 400, 'INVALID_JOB_ID', 'jobId must be a numeric string')
-      return
-    }
-    apiError(res, 500, 'BLOCKCHAIN_ERROR', message)
+  const job = findJobById(req.params.id)
+  if (!job) {
+    apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`)
+    return
   }
+  res.json(job)
 })
 
 // -------------------------------------------------------------------
@@ -643,14 +624,14 @@ app.post('/v1/jobs/:id/reject', requireApiKey, async (req: Request<{ id: string 
     return
   }
 
+  // reject() must be called by the evaluator — same deployer wallet as complete()
+  const evaluatorSigner = getDeployerWallet()
+  if (!evaluatorSigner) {
+    apiError(res, 500, 'CONFIG_ERROR', 'PRIVATE_KEY not set — evaluator wallet unavailable')
+    return
+  }
+
   try {
-    // reject() must be called by the evaluator — same deployer wallet as complete()
-    const evaluatorPrivateKey = process.env.PRIVATE_KEY
-    if (!evaluatorPrivateKey) {
-      apiError(res, 500, 'CONFIG_ERROR', 'PRIVATE_KEY not set — evaluator wallet unavailable')
-      return
-    }
-    const evaluatorSigner = new ethers.Wallet(evaluatorPrivateKey, provider)
     const jobManager = getJobManagerWithSigner(evaluatorSigner)
 
     const reasonStr = typeof reason === 'string' ? reason : ''
