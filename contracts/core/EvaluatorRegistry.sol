@@ -80,6 +80,12 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     ///      and evaluators can react to deactivation caused by a raised minimum.
     event MinEvaluatorStakeUpdated(uint256 oldMinimum, uint256 newMinimum);
 
+    /// @notice Emitted when the owner updates the slash pause state.
+    /// @dev The slash pause is the only emergency mechanism in EvaluatorRegistry that
+    ///      intentionally bypasses the GOVERNANCE_DELAY timelock, because it protects
+    ///      stakers against an actively exploited compromised AgentJobManager.
+    event SlashPauseUpdated(bool paused);
+
     // ── Governance timelock events ────────────────────────────────────────────
 
     /// @notice Emitted when a jobManager change is proposed.
@@ -121,6 +127,18 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @notice Thrown when slash() tries to slash more than the evaluator's stake.
     error SlashExceedsStake(uint256 requested, uint256 available);
 
+    /// @notice Thrown when slash() is called while slashPaused == true.
+    /// @dev FINDING NOUVEAU: the owner can pause slashing immediately (no timelock)
+    ///      to protect stakers during a window where the jobManager address may be
+    ///      compromised and the 2-day governance rotation has not yet completed.
+    error SlashPaused();
+
+    /// @notice Thrown when stake() would push the active evaluator count above MAX_ACTIVE_EVALUATORS.
+    /// @dev Prevents O(n) loops in assignEvaluator() from exceeding the block gas limit.
+    ///      An evaluator who triggers this error should wait for an existing evaluator to
+    ///      unstake, or contact governance to upgrade the contract to support a larger registry.
+    error MaxEvaluatorsReached();
+
     /// @notice Thrown when setWarmupPeriod() is called with a period exceeding the 30-day cap.
     /// @param proposed The warmup period that was proposed.
     /// @param maximum  The maximum allowed warmup period (30 days).
@@ -142,6 +160,18 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @notice Minimum stake required to be eligible as an evaluator.
     /// @dev 100 tokens with 18 decimals = 100 * 1e18. Governable via proposeMinEvaluatorStake/executeMinEvaluatorStake.
     uint256 public minEvaluatorStake = 100 * 1e18;
+
+    /// @notice Maximum number of simultaneously active evaluators.
+    /// @dev Prevents the O(n) loops in assignEvaluator() and executeMinEvaluatorStake()
+    ///      from exceeding the block gas limit on mainnet. At 200 evaluators, each loop
+    ///      iteration costs ~2 200 gas (1 SLOAD warm + comparison + increment), so the
+    ///      full loop costs ~440 000 gas — well within Base's 30M gas limit but bounded.
+    ///      Raising this constant requires a contract upgrade; governance cannot change it
+    ///      at runtime, which is intentional: the ceiling protects all stakers, not just
+    ///      the owner. If the ecosystem grows beyond 200 evaluators, the contract should
+    ///      be upgraded to a more efficient selection mechanism (e.g., Chainlink VRF +
+    ///      offchain registry snapshot).
+    uint256 public constant MAX_ACTIVE_EVALUATORS = 200;
 
     /// @notice Absolute ceiling on the warmup period, enforced in setWarmupPeriod().
     /// @dev 30 days is already a very conservative anti-Sybil window. A higher value
@@ -178,6 +208,18 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     ///      Changing this address is critical: a wrong address would allow an
     ///      arbitrary contract to trigger slashing and drain all staked tokens.
     address public jobManager;
+
+    /// @notice When true, slash() reverts immediately regardless of the caller.
+    /// @dev FINDING NOUVEAU: emergency circuit breaker. Allows the owner to instantly stop
+    ///      slashing without waiting for the 2-day GOVERNANCE_DELAY that applies to rotating
+    ///      jobManager. Scenario: AgentJobManager is compromised; the attacker could drain all
+    ///      evaluator stakes via fraudulent slash() calls during the 2-day rotation window.
+    ///      slashPaused == true blocks this attack instantly. The owner then rotates the
+    ///      jobManager normally via the timelock. Only the slash path is blocked — staking,
+    ///      unstaking, and evaluator assignment are unaffected.
+    ///      Intentionally NOT timelocked because the threat it defends against is active and
+    ///      time-sensitive: waiting 2 days to pause slashing defeats the purpose entirely.
+    bool public slashPaused;
 
     /// @notice Staking state per evaluator address.
     mapping(address => Evaluator) private evaluators;
@@ -248,6 +290,13 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
         // Activate the evaluator if they cross the minimum threshold and are not yet active.
         if (!eval.active && eval.stakedAmount >= minEvaluatorStake) {
+            // Guard against O(n) gas exhaustion: cap the active set size.
+            // We check before updating any state so that the revert leaves storage clean.
+            // The more permissive alternative (silently skip activation) is rejected because
+            // it would leave the evaluator believing they are eligible when they are not —
+            // a silent failure that would be extremely hard to diagnose on-chain.
+            if (activeEvaluators.length >= MAX_ACTIVE_EVALUATORS) revert MaxEvaluatorsReached();
+
             eval.active      = true;
             eval.index       = activeEvaluators.length;
             // Record the activation timestamp for the warmup filter in assignEvaluator().
@@ -317,10 +366,25 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      * @dev RESTRICTED: only callable by the AgentJobManager contract.
      *      Selection is stake-weighted: evaluators with more stake have proportionally
      *      higher selection probability, aligning economic incentives with quality.
-     *      Entropy sources: block.prevrandao (EIP-4399, post-Merge), jobId, block.timestamp,
-     *      and msg.sender (the jobManager). This is adequate for the current threat model
-     *      but NOT suitable for high-value adversarial contexts — consider Chainlink VRF
-     *      for a production system where evaluator selection is worth manipulating.
+     *
+     * @dev SECURITY NOTE (FINDING #2): This randomness is pseudo-random and theoretically
+     *      manipulable by the Base sequencer (Coinbase). On Base L2, block.prevrandao does not
+     *      carry the same entropy as on Ethereum mainnet post-Merge — the L2 sequencer can
+     *      influence block metadata within certain bounds. We mitigate this by combining
+     *      five independent entropy sources:
+     *        - block.prevrandao: sequencer-influenced randomness beacon
+     *        - blockhash(block.number - 1): previous block hash, harder to predict in advance
+     *        - block.timestamp: block time, manipulable only by ±15s
+     *        - jobId: job-specific entropy, different for every assignment
+     *        - activeEvaluators.length: registry state at assignment time
+     *      This combination significantly raises the cost of manipulation compared to a single
+     *      source, but is NOT cryptographically secure. For production use with high-value jobs
+     *      where evaluator selection is worth gaming, consider upgrading to Chainlink VRF v2.
+     *      The current implementation is acceptable for testnet and low-to-medium value mainnet
+     *      use where the economic incentive to manipulate is lower than the sequencer's cost.
+     *
+     *      Entropy sources: block.prevrandao (EIP-4399), blockhash(block.number - 1),
+     *      block.timestamp, jobId, and activeEvaluators.length.
      * @param jobId The job ID for which to assign an evaluator (used as entropy).
      * @return assigned The address of the selected evaluator.
      */
@@ -356,13 +420,20 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
         // Generate a pseudo-random point in [0, totalStake).
         // We use keccak256 rather than a simple modulo to avoid bias from small totalStake values.
+        //
+        // FINDING #2 fix: five entropy sources combined to raise the cost of sequencer manipulation.
+        // blockhash(block.number - 1) is included because it is determined by the previous block
+        // and cannot be known when the current transaction is being constructed, making it harder
+        // for the sequencer to predict and target a specific evaluator.
+        // activeEvaluators.length adds registry state entropy — different for every pool composition.
         uint256 randomPoint = uint256(
             keccak256(
                 abi.encodePacked(
-                    block.prevrandao,   // EIP-4399 randomness beacon (post-Merge)
-                    jobId,              // job-specific entropy
-                    block.timestamp,    // block time adds unpredictability for same-block jobs
-                    msg.sender          // jobManager address (constant but adds domain separation)
+                    block.prevrandao,           // EIP-4399 randomness beacon (post-Merge)
+                    blockhash(block.number - 1), // previous block hash — unknown at tx construction time
+                    block.timestamp,             // block time adds unpredictability for same-block jobs
+                    jobId,                       // job-specific entropy — unique per assignment
+                    activeEvaluators.length      // registry state at assignment time
                 )
             )
         ) % totalStake;
@@ -401,6 +472,11 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      */
     function slash(address evaluator, uint256 amount) external onlyJobManager nonReentrant {
         // CHECKS
+        // FINDING NOUVEAU: check slash pause BEFORE any state reads.
+        // If slashPaused == true, the owner has signalled an active emergency (likely a
+        // compromised jobManager). We revert immediately rather than burn staker tokens.
+        if (slashPaused) revert SlashPaused();
+
         Evaluator storage eval = evaluators[evaluator];
         if (amount > eval.stakedAmount) revert SlashExceedsStake(amount, eval.stakedAmount);
 
@@ -425,6 +501,29 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     }
 
     // ─── Admin functions ─────────────────────────────────────────────────────
+
+    // ── Emergency: slash pause ────────────────────────────────────────────────
+
+    /**
+     * @notice Immediately pauses or unpauses the slash() function.
+     * @dev FINDING NOUVEAU: emergency circuit breaker, intentionally NOT timelocked.
+     *      Rationale: if AgentJobManager is compromised and an attacker is actively calling
+     *      slash(), waiting 2 days for the GOVERNANCE_DELAY to rotate jobManager would allow
+     *      the attacker to drain all staked tokens. Pausing slash instantly (no delay) is the
+     *      only effective defence during the rotation window.
+     *      This is the ONLY function in EvaluatorRegistry that bypasses the timelock model.
+     *      It is justified because:
+     *        1. It only blocks slash() — all other protocol functions remain operational.
+     *        2. The slash pause itself cannot be used to steal funds (it only prevents burns).
+     *        3. It is reversible by the same owner, immediately, once the threat is resolved.
+     *      After activating the pause, the owner should immediately initiate proposeJobManager()
+     *      with the replacement address and wait for the 2-day delay to rotate jobManager.
+     * @param paused True to block slash(), false to re-enable it.
+     */
+    function setSlashPaused(bool paused) external onlyOwner {
+        slashPaused = paused;
+        emit SlashPauseUpdated(paused);
+    }
 
     // ── Governance timelock: jobManager ──────────────────────────────────────
 

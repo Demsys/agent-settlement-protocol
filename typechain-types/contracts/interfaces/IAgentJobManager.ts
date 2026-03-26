@@ -81,6 +81,7 @@ export interface IAgentJobManagerInterface extends Interface {
   getEvent(
     nameOrSignatureOrTopic:
       | "BudgetSet"
+      | "DeadlineExtended"
       | "JobCompleted"
       | "JobCreated"
       | "JobExpired"
@@ -164,6 +165,28 @@ export namespace BudgetSetEvent {
   export interface OutputObject {
     jobId: bigint;
     amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace DeadlineExtendedEvent {
+  export type InputTuple = [
+    jobId: BigNumberish,
+    oldDeadline: BigNumberish,
+    newDeadline: BigNumberish
+  ];
+  export type OutputTuple = [
+    jobId: bigint,
+    oldDeadline: bigint,
+    newDeadline: bigint
+  ];
+  export interface OutputObject {
+    jobId: bigint;
+    oldDeadline: bigint;
+    newDeadline: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -509,6 +532,13 @@ export interface IAgentJobManager extends BaseContract {
     BudgetSetEvent.OutputObject
   >;
   getEvent(
+    key: "DeadlineExtended"
+  ): TypedContractEvent<
+    DeadlineExtendedEvent.InputTuple,
+    DeadlineExtendedEvent.OutputTuple,
+    DeadlineExtendedEvent.OutputObject
+  >;
+  getEvent(
     key: "JobCompleted"
   ): TypedContractEvent<
     JobCompletedEvent.InputTuple,
@@ -575,6 +605,17 @@ export interface IAgentJobManager extends BaseContract {
       BudgetSetEvent.InputTuple,
       BudgetSetEvent.OutputTuple,
       BudgetSetEvent.OutputObject
+    >;
+
+    "DeadlineExtended(uint256,uint64,uint64)": TypedContractEvent<
+      DeadlineExtendedEvent.InputTuple,
+      DeadlineExtendedEvent.OutputTuple,
+      DeadlineExtendedEvent.OutputObject
+    >;
+    DeadlineExtended: TypedContractEvent<
+      DeadlineExtendedEvent.InputTuple,
+      DeadlineExtendedEvent.OutputTuple,
+      DeadlineExtendedEvent.OutputObject
     >;
 
     "JobCompleted(uint256,address,uint256,uint256)": TypedContractEvent<

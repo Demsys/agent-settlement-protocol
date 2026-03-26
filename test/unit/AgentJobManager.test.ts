@@ -68,6 +68,7 @@ async function deployFixture() {
     await registry.getAddress(),
     FEE_RATE,
     deployer.address,
+    ethers.ZeroAddress,        // _reputationBridge — not wired in unit tests
     [await usdc.getAddress()]  // _initialAllowedTokens — FINDING-007
   )) as AgentJobManager;
   await manager.waitForDeployment();
@@ -78,6 +79,15 @@ async function deployFixture() {
   await registry.proposeJobManager(await manager.getAddress());
   await time.increase(GOVERNANCE_DELAY + 1);
   await registry.executeJobManager(await manager.getAddress());
+
+  // 6. FINDING #1 fix: stake the `evaluator` signer in EvaluatorRegistry so that
+  //    createJob() with an explicit evaluator passes the isEligible() check.
+  //    We distribute tokens and advance past the warmup period (7 days) so the
+  //    evaluator is fully eligible when tests call createJob(... evaluator.address ...).
+  await protocolToken.transfer(evaluator.address, HUNDRED_TOKENS);
+  await protocolToken.connect(evaluator).approve(await registry.getAddress(), HUNDRED_TOKENS);
+  await registry.connect(evaluator).stake(HUNDRED_TOKENS);
+  await time.increase(WARMUP_PERIOD + 1);
 
   return { manager, registry, protocolToken, usdc, deployer, client, provider, evaluator, stranger };
 }

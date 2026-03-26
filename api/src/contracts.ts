@@ -40,19 +40,47 @@ function loadManifest(): DeploymentManifest {
 export const manifest = loadManifest()
 
 // -------------------------------------------------------------------
-// Provider (read-only, shared across all requests)
+// Provider
 // -------------------------------------------------------------------
 
-function createProvider(): ethers.JsonRpcProvider {
-  const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL
-  if (!rpcUrl) {
-    throw new Error('BASE_SEPOLIA_RPC_URL is not set in environment')
+// Returns either a single JsonRpcProvider (when only one URL is configured)
+// or a FallbackProvider that tries multiple RPCs in priority order.
+// The FallbackProvider with quorum=1 accepts the first successful response,
+// so a single stalled RPC node does not block all requests.
+function createProvider(): ethers.AbstractProvider {
+  const primary   = process.env.BASE_SEPOLIA_RPC_URL    // required
+  const secondary = process.env.BASE_SEPOLIA_RPC_URL_2  // optional
+  const tertiary  = process.env.BASE_SEPOLIA_RPC_URL_3  // optional
+
+  if (!primary) throw new Error('BASE_SEPOLIA_RPC_URL is not set')
+
+  type FallbackProviderConfig = { provider: ethers.JsonRpcProvider; priority: number; stallTimeout: number }
+  const configs: FallbackProviderConfig[] = [
+    { provider: new ethers.JsonRpcProvider(primary), priority: 1, stallTimeout: 2000 },
+  ]
+  if (secondary) {
+    configs.push({ provider: new ethers.JsonRpcProvider(secondary), priority: 2, stallTimeout: 2000 })
   }
-  return new ethers.JsonRpcProvider(rpcUrl)
+  if (tertiary) {
+    configs.push({ provider: new ethers.JsonRpcProvider(tertiary), priority: 3, stallTimeout: 2000 })
+  }
+
+  // With a single RPC, return it directly to avoid the FallbackProvider
+  // overhead (extra latency from quorum bookkeeping).
+  if (configs.length === 1) return configs[0].provider as ethers.JsonRpcProvider
+  return new ethers.FallbackProvider(configs, undefined, { quorum: 1 })
 }
 
-// Singleton provider — one connection pool for the whole process
-export const provider = createProvider()
+// Shared read-only provider — used for all contract reads and balance queries.
+export const provider: ethers.AbstractProvider = createProvider()
+
+// Wallet signers require a Provider interface that supports sendTransaction.
+// FallbackProvider satisfies ethers.Provider but ethers.Wallet only accepts
+// ethers.Provider directly — both JsonRpcProvider and FallbackProvider implement it.
+// We expose the primary URL as a dedicated JsonRpcProvider for wallet attachment.
+export const primaryProvider: ethers.JsonRpcProvider = new ethers.JsonRpcProvider(
+  process.env.BASE_SEPOLIA_RPC_URL ?? '',
+)
 
 // -------------------------------------------------------------------
 // Contract factories

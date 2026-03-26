@@ -117,15 +117,21 @@ async function main(): Promise<void> {
   const FLOOR = 100_000_000n // 0.1 gwei
   async function getFreshGasOverrides() {
     const fd = await ethers.provider.getFeeData()
+    // +50% over the current base fee gives sufficient priority without overpaying.
+    // The former 10x multiplier was appropriate for local devnets where fee data is
+    // unreliable, but on mainnet it would result in catastrophically high transaction
+    // costs — up to 10x the market rate per deployment transaction.
     const gasFields = fd.maxFeePerGas != null
       ? {
-          maxFeePerGas: fd.maxFeePerGas * 10n > FLOOR ? fd.maxFeePerGas * 10n : FLOOR,
-          maxPriorityFeePerGas: (fd.maxPriorityFeePerGas ?? fd.maxFeePerGas) * 10n > FLOOR
-            ? (fd.maxPriorityFeePerGas ?? fd.maxFeePerGas) * 10n
+          maxFeePerGas: (fd.maxFeePerGas * 150n) / 100n > FLOOR
+            ? (fd.maxFeePerGas * 150n) / 100n
+            : FLOOR,
+          maxPriorityFeePerGas: ((fd.maxPriorityFeePerGas ?? fd.maxFeePerGas) * 150n) / 100n > FLOOR
+            ? ((fd.maxPriorityFeePerGas ?? fd.maxFeePerGas) * 150n) / 100n
             : FLOOR,
         }
-      : { gasPrice: (fd.gasPrice ?? 1_000_000_000n) * 10n > FLOOR
-            ? (fd.gasPrice ?? 1_000_000_000n) * 10n
+      : { gasPrice: (fd.gasPrice ?? 1_000_000_000n) * 150n / 100n > FLOOR
+            ? (fd.gasPrice ?? 1_000_000_000n) * 150n / 100n
             : FLOOR }
     return { ...gasFields, nonce: currentNonce++ }
   }
@@ -217,7 +223,8 @@ async function main(): Promise<void> {
     const agentJobManager = await AgentJobManager.deploy(
       evaluatorRegistryAddress,
       FEE_RATE,
-      deployer.address, // feeRecipient = deployer wallet for initial SaaS phase
+      deployer.address,   // feeRecipient = deployer wallet for initial SaaS phase
+      ethers.ZeroAddress, // _reputationBridge — wired post-deployment via setReputationBridge()
       [mockUSDCDeployment.address], // _initialAllowedTokens — FINDING-007
       await getFreshGasOverrides(),
     )

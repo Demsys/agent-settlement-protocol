@@ -67,7 +67,9 @@ export interface AgentJobManagerInterface extends Interface {
     nameOrSignature:
       | "GOVERNANCE_DELAY"
       | "MAX_FEE_RATE"
+      | "MIN_BUDGET"
       | "MIN_DEADLINE_OFFSET"
+      | "MIN_EVALUATION_WINDOW"
       | "allowToken"
       | "allowedTokens"
       | "cancelProposal"
@@ -79,6 +81,7 @@ export interface AgentJobManagerInterface extends Interface {
       | "evaluatorRegistry"
       | "executeFeeRate"
       | "executeFeeRecipient"
+      | "executeReputationBridge"
       | "extendDeadline"
       | "feeRate"
       | "feeRecipient"
@@ -89,12 +92,12 @@ export interface AgentJobManagerInterface extends Interface {
       | "owner"
       | "proposeFeeRate"
       | "proposeFeeRecipient"
+      | "proposeReputationBridge"
       | "reject"
       | "renounceOwnership"
       | "reopen"
       | "reputationBridge"
       | "setBudget"
-      | "setReputationBridge"
       | "submit"
       | "transferOwnership"
   ): FunctionFragment;
@@ -118,6 +121,7 @@ export interface AgentJobManagerInterface extends Interface {
       | "ProposalCancelled"
       | "RefundClaimed"
       | "RefundPending"
+      | "ReputationBridgeProposed"
       | "ReputationBridgeUpdated"
       | "TokenAllowed"
       | "TokenDisallowed"
@@ -132,7 +136,15 @@ export interface AgentJobManagerInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "MIN_BUDGET",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "MIN_DEADLINE_OFFSET",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "MIN_EVALUATION_WINDOW",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -180,6 +192,10 @@ export interface AgentJobManagerInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "executeReputationBridge",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
     functionFragment: "extendDeadline",
     values: [BigNumberish, BigNumberish]
   ): string;
@@ -214,6 +230,10 @@ export interface AgentJobManagerInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "proposeReputationBridge",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
     functionFragment: "reject",
     values: [BigNumberish, BytesLike]
   ): string;
@@ -234,10 +254,6 @@ export interface AgentJobManagerInterface extends Interface {
     values: [BigNumberish, BigNumberish]
   ): string;
   encodeFunctionData(
-    functionFragment: "setReputationBridge",
-    values: [AddressLike]
-  ): string;
-  encodeFunctionData(
     functionFragment: "submit",
     values: [BigNumberish, BytesLike]
   ): string;
@@ -254,8 +270,13 @@ export interface AgentJobManagerInterface extends Interface {
     functionFragment: "MAX_FEE_RATE",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "MIN_BUDGET", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "MIN_DEADLINE_OFFSET",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "MIN_EVALUATION_WINDOW",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "allowToken", data: BytesLike): Result;
@@ -294,6 +315,10 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "executeReputationBridge",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "extendDeadline",
     data: BytesLike
   ): Result;
@@ -318,6 +343,10 @@ export interface AgentJobManagerInterface extends Interface {
     functionFragment: "proposeFeeRecipient",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "proposeReputationBridge",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "reject", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
@@ -329,10 +358,6 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "setBudget", data: BytesLike): Result;
-  decodeFunctionResult(
-    functionFragment: "setReputationBridge",
-    data: BytesLike
-  ): Result;
   decodeFunctionResult(functionFragment: "submit", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "transferOwnership",
@@ -635,10 +660,24 @@ export namespace RefundPendingEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace ReputationBridgeUpdatedEvent {
-  export type InputTuple = [newBridge: AddressLike];
-  export type OutputTuple = [newBridge: string];
+export namespace ReputationBridgeProposedEvent {
+  export type InputTuple = [newBridge: AddressLike, executableAt: BigNumberish];
+  export type OutputTuple = [newBridge: string, executableAt: bigint];
   export interface OutputObject {
+    newBridge: string;
+    executableAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace ReputationBridgeUpdatedEvent {
+  export type InputTuple = [oldBridge: AddressLike, newBridge: AddressLike];
+  export type OutputTuple = [oldBridge: string, newBridge: string];
+  export interface OutputObject {
+    oldBridge: string;
     newBridge: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
@@ -718,7 +757,11 @@ export interface AgentJobManager extends BaseContract {
 
   MAX_FEE_RATE: TypedContractMethod<[], [bigint], "view">;
 
+  MIN_BUDGET: TypedContractMethod<[], [bigint], "view">;
+
   MIN_DEADLINE_OFFSET: TypedContractMethod<[], [bigint], "view">;
+
+  MIN_EVALUATION_WINDOW: TypedContractMethod<[], [bigint], "view">;
 
   allowToken: TypedContractMethod<[token: AddressLike], [void], "nonpayable">;
 
@@ -771,6 +814,12 @@ export interface AgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
+  executeReputationBridge: TypedContractMethod<
+    [_bridge: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+
   extendDeadline: TypedContractMethod<
     [jobId: BigNumberish, newDeadline: BigNumberish],
     [void],
@@ -815,6 +864,12 @@ export interface AgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
+  proposeReputationBridge: TypedContractMethod<
+    [_bridge: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+
   reject: TypedContractMethod<
     [jobId: BigNumberish, reason: BytesLike],
     [void],
@@ -833,12 +888,6 @@ export interface AgentJobManager extends BaseContract {
 
   setBudget: TypedContractMethod<
     [jobId: BigNumberish, amount: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-
-  setReputationBridge: TypedContractMethod<
-    [_bridge: AddressLike],
     [void],
     "nonpayable"
   >;
@@ -866,7 +915,13 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "MAX_FEE_RATE"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
+    nameOrSignature: "MIN_BUDGET"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "MIN_DEADLINE_OFFSET"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "MIN_EVALUATION_WINDOW"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "allowToken"
@@ -915,6 +970,9 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "executeFeeRecipient"
   ): TypedContractMethod<[newFeeRecipient: AddressLike], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "executeReputationBridge"
+  ): TypedContractMethod<[_bridge: AddressLike], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "extendDeadline"
   ): TypedContractMethod<
     [jobId: BigNumberish, newDeadline: BigNumberish],
@@ -961,6 +1019,9 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "proposeFeeRecipient"
   ): TypedContractMethod<[newFeeRecipient: AddressLike], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "proposeReputationBridge"
+  ): TypedContractMethod<[_bridge: AddressLike], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "reject"
   ): TypedContractMethod<
     [jobId: BigNumberish, reason: BytesLike],
@@ -987,9 +1048,6 @@ export interface AgentJobManager extends BaseContract {
     [void],
     "nonpayable"
   >;
-  getFunction(
-    nameOrSignature: "setReputationBridge"
-  ): TypedContractMethod<[_bridge: AddressLike], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "submit"
   ): TypedContractMethod<
@@ -1119,6 +1177,13 @@ export interface AgentJobManager extends BaseContract {
     RefundPendingEvent.InputTuple,
     RefundPendingEvent.OutputTuple,
     RefundPendingEvent.OutputObject
+  >;
+  getEvent(
+    key: "ReputationBridgeProposed"
+  ): TypedContractEvent<
+    ReputationBridgeProposedEvent.InputTuple,
+    ReputationBridgeProposedEvent.OutputTuple,
+    ReputationBridgeProposedEvent.OutputObject
   >;
   getEvent(
     key: "ReputationBridgeUpdated"
@@ -1330,7 +1395,18 @@ export interface AgentJobManager extends BaseContract {
       RefundPendingEvent.OutputObject
     >;
 
-    "ReputationBridgeUpdated(address)": TypedContractEvent<
+    "ReputationBridgeProposed(address,uint256)": TypedContractEvent<
+      ReputationBridgeProposedEvent.InputTuple,
+      ReputationBridgeProposedEvent.OutputTuple,
+      ReputationBridgeProposedEvent.OutputObject
+    >;
+    ReputationBridgeProposed: TypedContractEvent<
+      ReputationBridgeProposedEvent.InputTuple,
+      ReputationBridgeProposedEvent.OutputTuple,
+      ReputationBridgeProposedEvent.OutputObject
+    >;
+
+    "ReputationBridgeUpdated(address,address)": TypedContractEvent<
       ReputationBridgeUpdatedEvent.InputTuple,
       ReputationBridgeUpdatedEvent.OutputTuple,
       ReputationBridgeUpdatedEvent.OutputObject

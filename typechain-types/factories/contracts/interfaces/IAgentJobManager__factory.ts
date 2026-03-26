@@ -12,6 +12,22 @@ const _abi = [
   {
     inputs: [
       {
+        internalType: "uint128",
+        name: "amount",
+        type: "uint128",
+      },
+      {
+        internalType: "uint128",
+        name: "minimum",
+        type: "uint128",
+      },
+    ],
+    name: "BudgetBelowMinimum",
+    type: "error",
+  },
+  {
+    inputs: [
+      {
         internalType: "uint256",
         name: "provided",
         type: "uint256",
@@ -55,6 +71,17 @@ const _abi = [
       },
     ],
     name: "DeadlineTooSoon",
+    type: "error",
+  },
+  {
+    inputs: [
+      {
+        internalType: "address",
+        name: "evaluator",
+        type: "address",
+      },
+    ],
+    name: "EvaluatorNotEligible",
     type: "error",
   },
   {
@@ -149,6 +176,31 @@ const _abi = [
       },
     ],
     name: "BudgetSet",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        indexed: false,
+        internalType: "uint64",
+        name: "oldDeadline",
+        type: "uint64",
+      },
+      {
+        indexed: false,
+        internalType: "uint64",
+        name: "newDeadline",
+        type: "uint64",
+      },
+    ],
+    name: "DeadlineExtended",
     type: "event",
   },
   {

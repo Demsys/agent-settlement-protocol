@@ -134,6 +134,16 @@ interface IAgentJobManager {
     );
 
     /**
+     * @notice Emitted when the deadline of a job is extended.
+     * @dev Emitted in two contexts:
+     *      1. When the Client calls extendDeadline() on a Funded job (voluntary extension).
+     *      2. When submit() auto-extends the deadline because less than MIN_EVALUATION_WINDOW
+     *         remains — protecting the Provider from a deadline-griefing attack (FINDING #3).
+     *      Both old and new deadlines are logged so indexers can track the full history.
+     */
+    event DeadlineExtended(uint256 indexed jobId, uint64 oldDeadline, uint64 newDeadline);
+
+    /**
      * @notice Emitted when a refund is registered for later claim (Pull over Push pattern).
      * @dev Separating this event from JobRejected/JobExpired lets the SDK track
      *      pending refunds independently from job status changes.
@@ -188,6 +198,17 @@ interface IAgentJobManager {
 
     /// @notice Thrown when claimRefund() is called but the caller has no pending refund.
     error NothingToRefund();
+
+    /// @notice Thrown when createJob() is called with an evaluator that is not registered
+    ///         and eligible in the EvaluatorRegistry.
+    /// @dev Prevents a client from designating an unstaked accomplice as evaluator,
+    ///      bypassing all cryptoeconomic guarantees of the staker network.
+    error EvaluatorNotEligible(address evaluator);
+
+    /// @notice Thrown when setBudget() is called with an amount below MIN_BUDGET.
+    /// @dev Prevents budgets so small that fee calculation rounds to zero, making the
+    ///      protocol unable to collect its fee at any feeRate.
+    error BudgetBelowMinimum(uint128 amount, uint128 minimum);
 
     // ─── Core ERC-8183 Functions ──────────────────────────────────────────────
 
