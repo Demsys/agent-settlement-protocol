@@ -27,6 +27,7 @@ import {
   getMockUSDCWithSigner,
   getMockUSDCReadOnly,
   USDC_DECIMALS,
+  JOB_STATUS_MAP,
 } from './contracts'
 import { getStats } from './stats'
 import { getDashboardHtml } from './dashboard'
@@ -637,6 +638,25 @@ app.get('/v1/jobs/:id', async (req: Request<{ id: string }>, res: Response) => {
     apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`)
     return
   }
+
+  // Auto-reconcile: if the background handler timed out before updating storage,
+  // the on-chain state will be ahead of local storage. Detect and fix silently.
+  const terminalStatuses: Array<typeof job.status> = ['completed', 'rejected', 'expired']
+  if (!terminalStatuses.includes(job.status)) {
+    try {
+      const onChainJob = await getJobManagerReadOnly().getJob(BigInt(job.jobId))
+      const onChainStatus = JOB_STATUS_MAP[Number(onChainJob.status)] as typeof job.status | undefined
+      if (onChainStatus && onChainStatus !== job.status) {
+        console.log(`[sync] Job ${job.jobId}: local=${job.status} → on-chain=${onChainStatus}`)
+        updateJobStatus(job.jobId, onChainStatus)
+        return res.json({ ...job, status: onChainStatus })
+      }
+    } catch (err) {
+      // Non-fatal: return stored status if the RPC call fails
+      console.warn(`[sync] Failed to read on-chain status for job ${job.jobId}:`, err)
+    }
+  }
+
   res.json(job)
 })
 
