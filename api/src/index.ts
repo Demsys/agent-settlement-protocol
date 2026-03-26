@@ -137,6 +137,47 @@ function requireApiKey(req: Request, res: Response, next: NextFunction): void {
 }
 
 // -------------------------------------------------------------------
+// POST /v1/faucet/usdc
+// Testnet only — mints MockUSDC to any address via the deployer wallet
+// -------------------------------------------------------------------
+
+app.post('/v1/faucet/usdc', async (req: Request, res: Response) => {
+  const { address, amount = '100' } = req.body as { address?: unknown; amount?: unknown }
+
+  if (!address || typeof address !== 'string' || !ethers.isAddress(address)) {
+    apiError(res, 400, 'INVALID_ADDRESS', 'address must be a valid Ethereum address')
+    return
+  }
+  const amountStr = String(amount)
+  if (!/^\d+(\.\d+)?$/.test(amountStr)) {
+    apiError(res, 400, 'INVALID_AMOUNT', 'amount must be a decimal string (e.g. "100")')
+    return
+  }
+
+  const privateKey = process.env.PRIVATE_KEY
+  if (!privateKey) {
+    apiError(res, 503, 'NO_DEPLOYER', 'Deployer key not configured')
+    return
+  }
+
+  try {
+    const deployer = new ethers.Wallet(privateKey, provider)
+    const usdc = getMockUSDCWithSigner(deployer)
+    const amountWei = ethers.parseUnits(amountStr, USDC_DECIMALS)
+    const tx = await usdc.mint(address, amountWei)
+    const receipt = await withTimeout(tx.wait(1), 'faucet mint')
+    if (!receipt || receipt.status === 0) {
+      apiError(res, 500, 'MINT_FAILED', 'Mint transaction reverted')
+      return
+    }
+    res.json({ address, amount: amountStr, txHash: tx.hash })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    apiError(res, 500, 'FAUCET_ERROR', message)
+  }
+})
+
+// -------------------------------------------------------------------
 // POST /v1/agents
 // Creates a managed wallet for a new agent and returns its address
 // -------------------------------------------------------------------
