@@ -26,7 +26,7 @@ export type {
   CreateAgentResponse,
   BalanceResult,
   JobResult,
-  SubmitResult,
+  AsyncJobResult,
   AgentClientOptions,
   CreateJobParams,
 } from './types'
