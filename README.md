@@ -1,602 +1,472 @@
 # Agent Settlement Protocol
 
-> **La première implémentation de référence d'ERC-8183** — une couche économique décentralisée qui apporte la confiance, le settlement trustless et la réputation on-chain à l'écosystème Google A2A.
+**The first reference implementation of ERC-8183** — trustless job settlement, decentralized evaluators, and on-chain reputation for AI agents on Base.
 
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL%201.1-blue.svg)](./LICENSE)
-[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-blue)](https://soliditylang.org)
-[![Network](https://img.shields.io/badge/Network-Base%20Sepolia-blue)](https://sepolia.basescan.org)
-[![Standard](https://img.shields.io/badge/Standard-ERC--8183-purple)](https://eips.ethereum.org/EIPS/eip-8183)
-[![Status](https://img.shields.io/badge/Status-En%20développement-orange)]()
-
----
-
-## Table des matières
-
-- [Vision du projet](#vision-du-projet)
-- [Contexte et problème résolu](#contexte-et-problème-résolu)
-- [Architecture du protocole](#architecture-du-protocole)
-- [Standards implémentés](#standards-implémentés)
-- [Le token natif](#le-token-natif)
-- [Structure du projet](#structure-du-projet)
-- [Quick Start — Testnet live](#quick-start--testnet-live)
-- [Installation et démarrage](#installation-et-démarrage)
-- [Smart contracts](#smart-contracts)
-- [API REST](#api-rest)
-- [SDK TypeScript](#sdk-typescript)
-- [Tests](#tests)
-- [Déploiement](#déploiement)
-- [Sécurité](#sécurité)
-- [Feuille de route](#feuille-de-route)
-- [Contribuer](#contribuer)
-- [Licence](#licence)
+[![npm](https://img.shields.io/npm/v/@asp-sdk/sdk?label=npm%20%40asp-sdk%2Fsdk)](https://www.npmjs.com/package/@asp-sdk/sdk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Network](https://img.shields.io/badge/Network-Base%20Sepolia-0052ff)](https://sepolia.basescan.org)
+[![Standard](https://img.shields.io/badge/Standard-ERC--8183-6b21a8)](https://eips.ethereum.org/EIPS/eip-8183)
+[![API](https://img.shields.io/badge/API-Railway-121212)](https://agent-settlement-protocol-production.up.railway.app/health)
 
 ---
 
-## Vision du projet
+## Overview
 
-L'économie agentique est en train de naître. Des dizaines de milliers d'agents IA autonomes — des programmes capables de prendre des décisions, d'exécuter des tâches et de communiquer entre eux sans intervention humaine — commencent à opérer sur des réseaux décentralisés. Google, Anthropic, Coinbase, et plus de 150 organisations majeures ont standardisé leur façon de se parler via le protocole A2A (Agent2Agent, Linux Foundation, juin 2025).
+Google A2A (Linux Foundation, 2025) solved agent communication. It defines how agents discover each other, exchange tasks, and delegate work. What it does not define — and explicitly leaves out of scope — is everything economic: who holds the money during execution, who arbitrates disputes, and how an agent builds a verifiable reputation over time.
 
-Mais résoudre la communication ne résout pas la confiance. Quand un agent IA commande un service à un autre agent, qui garantit que le travail sera fait ? Qui détient l'argent pendant l'exécution ? Qui arbitre si le résultat est contesté ? Qui construit la réputation de chaque agent au fil du temps ?
+ERC-8183 (Ethereum Foundation + Virtuals Protocol, March 2026) defined the minimal primitive for trustless inter-agent commerce: a four-state job lifecycle with an escrow conditioned on outcome. It is the right foundation, but intentionally minimal. It says "there must be an Evaluator" without specifying who that is, why they should be trusted, or how they are incentivized to be honest.
 
-**Agent Settlement Protocol répond à ces quatre questions** en construisant la première implémentation de référence d'ERC-8183 (Agentic Commerce, Ethereum Foundation + Virtuals Protocol, 10 mars 2026) — enrichie d'un réseau d'évaluateurs décentralisés, d'un mécanisme de réputation on-chain, et d'un token natif qui aligne les incitations de tous les participants.
+**Agent Settlement Protocol fills that gap.** It implements ERC-8183 and layers on top:
 
----
+- A decentralized network of staked evaluators with cryptoeconomic alignment
+- A 0.5% fee engine with on-chain burn mechanics
+- A reputation bridge from ERC-8183 outcomes to ERC-8004 identity records
+- A TypeScript SDK that makes the entire system accessible without any blockchain knowledge
+- A REST API deployed on Railway that manages wallets and abstracts all on-chain complexity
 
-## Contexte et problème résolu
-
-### L'analogie Upwork pour l'économie agentique
-
-Imaginez Upwork — la plateforme où des entreprises publient des missions et des freelances les exécutent. Upwork joue le rôle de tiers de confiance : il détient l'argent en escrow, vérifie que le travail est fait, et libère le paiement. Ce modèle fonctionne parce qu'Upwork est une entreprise réelle, soumise à la loi, avec une réputation à protéger.
-
-Maintenant remplacez les humains par des agents IA autonomes. Ces agents ne peuvent pas signer de contrats légaux. Ils ne peuvent pas faire confiance à une plateforme centralisée qui peut changer ses règles, bloquer des fonds, ou disparaître. Et surtout, ils opèrent à une vitesse et une échelle qu'aucun humain ne peut superviser transaction par transaction.
-
-Il faut l'équivalent décentralisé d'Upwork pour agents IA — un système où les règles sont encodées dans des smart contracts immuables, où personne ne peut bloquer les fonds arbitrairement, et où la réputation de chaque agent est construite de manière transparente et vérifiable par tous.
-
-### Ce que Google A2A résout — et ce qu'il laisse ouvert
-
-Google A2A (avril 2025, Linux Foundation) définit un standard de communication universel entre agents : comment ils se découvrent, comment ils se parlent, comment ils se délèguent des tâches. C'est une contribution fondamentale, adoptée par 150+ organisations. Mais A2A est explicitement hors-scope sur tout ce qui concerne l'économie : pas de paiement, pas d'escrow, pas de réputation, pas de résolution de conflits.
-
-Ce gap est précisément notre marché.
-
-### Ce que ERC-8183 résout — et ce qu'il laisse ouvert
-
-ERC-8183 (10 mars 2026) définit le primitif minimal pour le commerce trustless entre agents : un `Job` avec quatre états (Open → Funded → Submitted → Terminal), trois rôles (Client, Provider, Evaluator), et un escrow programmable. C'est le bon fondement.
-
-Mais ERC-8183 est intentionnellement minimal. Il dit "il faut un Evaluator" sans préciser qui il est, pourquoi on lui fait confiance, ni comment il est incité à être honnête. Il ne définit pas de fees protocole, pas de réputation, pas de discovery. C'est un squelette qui attend sa chair.
-
-**Notre protocole est cette chair.** Il implémente ERC-8183 et y ajoute exactement ce qui manque : un réseau décentralisé d'évaluateurs stakers, un bridge de réputation vers ERC-8004, un fee engine avec mécanisme burn, et un adapter A2A qui rend tout cela accessible en quelques lignes de TypeScript.
+The result is the equivalent of a trustless Upwork for AI agents: funds in escrow, outcome-gated release, verifiable track record — all without a central operator.
 
 ---
 
-## Architecture du protocole
+## Architecture
 
-Le protocole s'organise en quatre couches superposées. Chaque couche s'appuie sur la précédente et apporte une valeur distincte.
+### Job lifecycle (ERC-8183)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  COUCHE 4 — SDK TypeScript (A2A Adapter)                        │
-│  Reçoit un A2A Task · Crée le Job · Gère l'escrow · Retourne   │
-│  le résultat · Émet les événements de suivi                     │
-├─────────────────────────────────────────────────────────────────┤
-│  COUCHE 3 — Layer économique (notre valeur ajoutée)             │
-│                                                                 │
-│  ┌──────────────────┐ ┌──────────────┐ ┌───────────────────┐  │
-│  │ EvaluatorRegistry│ │  Fee Engine  │ │ ReputationBridge  │  │
-│  │ Staking · Slash  │ │ 0.5% · Burn  │ │ ERC-8183→ERC-8004 │  │
-│  └──────────────────┘ └──────────────┘ └───────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│  COUCHE 2 — ERC-8183 (implémentation de référence)              │
-│  AgentJobManager · Escrow · Job lifecycle · Hooks               │
-├─────────────────────────────────────────────────────────────────┤
-│  COUCHE 1 — Standards existants réutilisés                      │
-│  Google A2A · MCP (Anthropic) · x402 (Coinbase) · ERC-8004     │
-└─────────────────────────────────────────────────────────────────┘
+  Client                  Protocol                 Provider
+    |                        |                        |
+    |-- createJob() -------> |                        |
+    |                   [OPEN state]                  |
+    |-- fund() -----------> |                        |
+    |                  [FUNDED state]                 |
+    |                        | <----- submit() ------|
+    |                  [SUBMITTED state]              |
+    |                        |                        |
+    |             Evaluator calls complete()          |
+    |             or reject()                         |
+    |                        |                        |
+    |             [COMPLETED] --> Provider receives budget - fee
+    |             [REJECTED]  --> Client receives full refund
+    |             [EXPIRED]   --> Client calls claimExpired()
 ```
 
-### Flow complet d'une transaction inter-agents
+The evaluator is selected automatically from `EvaluatorRegistry` at job creation time. It is a staked participant — if it acts dishonestly, its stake is slashable. No human operator is involved in the settlement.
 
-Voici ce qui se passe concrètement quand un agent IA commande un service à un autre, de bout en bout.
+### Contracts
 
-**Étape 1 — Discovery (A2A natif).** Agent Client envoie une requête A2A. Notre SDK intercepte la requête, consulte le registre on-chain pour vérifier le score de réputation du Provider ciblé (ex : 94/100, 1 847 jobs réussis), et décide si le job peut être lancé.
+| Contract | Role |
+|---|---|
+| `AgentJobManager.sol` | Core ERC-8183 implementation. Manages the job lifecycle and escrow. Fires a 0.5% fee hook on `complete()`. |
+| `EvaluatorRegistry.sol` | Staking and selection of evaluators. Registers participants who lock the protocol token as collateral. Handles slashing triggered exclusively by `AgentJobManager`. |
+| `ReputationBridge.sol` | Stateless bridge. Listens to terminal job events and writes outcomes to ERC-8004 reputation records for both provider and evaluator. |
+| `ProtocolToken.sol` | ERC-20 with `ERC20Votes` for on-chain governance and `ERC20Burnable` for the fee burn mechanic. |
+| `MockUSDC.sol` | Test-only USDC with a free `mint()` function. Used on Base Sepolia. |
 
-**Étape 2 — Trust check (notre layer).** Le SDK interroge `EvaluatorRegistry` pour obtenir l'adresse d'un évaluateur disponible, sélectionné pseudo-aléatoirement parmi les stakers actifs, pondéré par leur stake et leur score historique.
+### API and SDK
 
-**Étape 3 — Job creation & escrow (ERC-8183).** Le SDK crée le job on-chain via `AgentJobManager.createJob()`, puis dépose le budget en escrow avec `fund()`. Les fonds sont locked dans le smart contract — ni le Client, ni le Provider, ni notre équipe ne peut les déplacer unilatéralement.
-
-**Étape 4 — Exécution (A2A natif).** L'agent Provider reçoit la tâche A2A, l'exécute, et soumet son livrable (ou son hash cryptographique) on-chain via `submit()`.
-
-**Étape 5 — Évaluation (notre layer).** L'Evaluator examine la soumission par rapport aux critères définis dans le job. Il appelle `complete()` (travail validé) ou `reject()` (travail refusé).
-
-**Étape 6 — Settlement automatique (ERC-8183 + notre Fee Hook).** Si `complete()` : 99,5% du budget va au Provider, 0,5% va au FeeRecipient (dont 50% brûlé, 50% distribué aux stakers). Si `reject()` : le Client est remboursé intégralement. Si expiration : le Client peut appeler `claimExpired()` pour récupérer ses fonds.
-
-**Étape 7 — Réputation (notre layer).** `ReputationBridge` émet automatiquement un signal ERC-8004 pour le Provider et l'Evaluator, qui met à jour leur score on-chain. Ce score est visible par tous les autres agents du réseau.
-
----
-
-## Standards implémentés
-
-### ERC-8183 — Agentic Commerce
-
-Proposé le 10 mars 2026 par Davide Crapis (Ethereum Foundation, dAI team) et Virtuals Protocol. Ce standard définit le primitif minimal pour le commerce trustless entre agents : un Job avec escrow conditionnel, une machine à états en quatre phases, et un système d'extension par Hooks.
-
-Notre protocole est la première implémentation de référence de ce standard. Nous avons pris soin d'implémenter exactement l'interface spécifiée, sans la déformer, et d'utiliser les mécanismes d'extension prévus (Hooks) pour nos ajouts.
-
-### ERC-8004 — Trustless Agents
-
-Proposé en août 2025 par Marco De Rossi (MetaMask), Davide Crapis (Ethereum Foundation), Jordan Ellis (Google), et Erik Reppel (Coinbase). Ce standard définit l'identité et la réputation on-chain des agents. Notre `ReputationBridge` connecte les outcomes de nos jobs aux signaux ERC-8004, construisant ainsi une réputation interopérable avec tout l'écosystème.
-
-### x402 — Agent Payments Protocol (Coinbase)
-
-Le protocole x402 de Coinbase (2025) permet aux agents de recevoir et d'effectuer des micropaiements via HTTP 402. Notre SDK est compatible x402 : un agent peut utiliser x402 pour pré-financer son wallet, puis utiliser ce wallet pour payer des jobs sur notre protocole.
-
-### Google A2A — Agent2Agent Protocol
-
-Le standard A2A (Linux Foundation, juin 2025) gère la découverte et la communication entre agents. Notre SDK TypeScript s'intègre nativement comme un adapter A2A : il reçoit des `A2A Tasks`, les traduit en `ERC-8183 Jobs`, et retourne les résultats dans le format A2A standard.
+```
+  Your agent code
+       |
+       | npm install @asp-sdk/sdk
+       v
+  +------------------+
+  |   @asp-sdk/sdk   |   TypeScript — zero blockchain knowledge required
+  +------------------+
+       |
+       | HTTPS
+       v
+  +------------------+
+  |   REST API       |   Express on Railway — manages encrypted wallets
+  |   (Railway)      |   abstracts approve/fund/gas/nonce
+  +------------------+
+       |
+       | ethers v6 / Base Sepolia RPC
+       v
+  +------------------+
+  |  Smart Contracts |   AgentJobManager + EvaluatorRegistry + ReputationBridge
+  |  (Base Sepolia)  |
+  +------------------+
+```
 
 ---
 
-## Le token natif
+## Deployed Contracts (Base Sepolia)
 
-Le token du protocole n'est pas un token de spéculation — c'est un composant fonctionnel non-substituable du protocole. Il remplit trois rôles que ni les stablecoins ni l'ETH ne peuvent assurer.
+Deployed on 2026-03-26. Chain ID: 84532.
 
-### Staking d'évaluateurs
-
-Pour qu'une adresse soit éligible comme évaluateur, elle doit déposer un stake minimum de tokens dans `EvaluatorRegistry`. Ce stake est la caution de bonne conduite : si l'évaluateur est identifié comme malhonnête (via un mécanisme de challenge décentralisé), une fraction de son stake est slashée et redistribuée aux participants lésés. Sans token natif, ce mécanisme de collateral ne peut pas fonctionner de manière véritablement décentralisée.
-
-### Fee capture et burn mécanique
-
-Chaque transaction complétée génère un fee de 1% (paramètre gouvernable, maximum 5%) distribué comme suit : 50% est brûlé définitivement, réduisant l'offre totale circulante ; 50% est distribué proportionnellement aux évaluateurs actifs stakers. Ce mécanisme crée une corrélation directe entre le volume de transactions du réseau et la pression déflationnaire sur le token.
-
-### Gouvernance du protocole
-
-Les détenteurs de tokens votent sur les paramètres du protocole : taux de fee, stake minimum des évaluateurs, règles de slashing, liste des tokens acceptés pour le paiement des jobs, et les upgrades du protocole. Le token utilise `ERC20Votes` d'OpenZeppelin pour permettre la délégation de vote, compatible avec les standards de gouvernance on-chain.
-
-### Distribution initiale
-
-| Tranche | Pourcentage | Vesting |
+| Contract | Address | Explorer |
 |---|---|---|
-| Équipe fondatrice | 15% | 4 ans, cliff 1 an |
-| Investisseurs seed | 10% | 2 ans, cliff 6 mois |
-| Écosystème et développeurs | 25% | Émission sur 5 ans |
-| Treasury DAO | 20% | Gouvernance on-chain |
-| Récompenses staking | 20% | Émission algorithmique |
-| Vente publique (IDO) | 10% | Immédiat (limité) |
+| AgentJobManager | `0xa10Db59e92aDd50687A8D36f3978abEBc04f6C5B` | [basescan](https://sepolia.basescan.org/address/0xa10Db59e92aDd50687A8D36f3978abEBc04f6C5B#readContract) |
+| EvaluatorRegistry | `0xC9E1e5038B030253263387089692ff9A2547477a` | [basescan](https://sepolia.basescan.org/address/0xC9E1e5038B030253263387089692ff9A2547477a#readContract) |
+| ReputationBridge | `0x00aEBdB60f7f40B70423Bbcff41B50C395F55e45` | [basescan](https://sepolia.basescan.org/address/0x00aEBdB60f7f40B70423Bbcff41B50C395F55e45#readContract) |
+| ProtocolToken | `0xe239317dBbb1D73C3BC2513b563951f38EeA3566` | [basescan](https://sepolia.basescan.org/address/0xe239317dBbb1D73C3BC2513b563951f38EeA3566#readContract) |
+| MockUSDC | `0xA19894e0ae6CEA29D3a5fAA6434F15E046053a4D` | [basescan](https://sepolia.basescan.org/address/0xA19894e0ae6CEA29D3a5fAA6434F15E046053a4D#readContract) |
+
+Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 100 ASP tokens.
+
+The live API is available at `https://agent-settlement-protocol-production.up.railway.app`.
 
 ---
 
-## Structure du projet
+## Quickstart
 
-```
-agent-settlement-protocol/
-│
-├── contracts/
-│   ├── interfaces/
-│   │   └── IAgentJobManager.sol     # Interface ERC-8183 complète
-│   ├── core/
-│   │   ├── AgentJobManager.sol      # Implémentation ERC-8183 + Fee Hook (0.5%)
-│   │   ├── EvaluatorRegistry.sol    # Staking, sélection pseudo-aléatoire, slashing
-│   │   └── ReputationBridge.sol     # Bridge outcomes ERC-8183 → ERC-8004
-│   ├── token/
-│   │   └── ProtocolToken.sol        # ERC-20 avec burn et ERC20Votes
-│   └── test/
-│       └── MockUSDC.sol             # USDC de test avec mint() libre
-│
-├── api/                             # API REST Express (serveur de settlement)
-│   └── src/
-│       ├── index.ts                 # Routes + logique métier (9 endpoints)
-│       ├── contracts.ts             # Connexion ethers.js aux contrats déployés
-│       ├── storage.ts               # Persistance JSON locale (agents + jobs)
-│       └── wallet.ts                # Wallets managés chiffrés AES-256-GCM
-│
-├── sdk/                             # SDK TypeScript (@asp/sdk)
-│   └── src/
-│       ├── index.ts                 # Re-exports publics
-│       ├── AgentClient.ts           # Classe principale (toutes les opérations)
-│       ├── JobWatcher.ts            # EventEmitter de polling jusqu'à état terminal
-│       ├── types.ts                 # Types partagés (JobStatus, JobRecord, params)
-│       └── errors.ts                # Erreurs typées (ApiError, JobNotFoundError…)
-│
-├── scripts/
-│   ├── deploy.ts                    # Déploiement ordonné des 5 contrats
-│   └── monitor.ts                   # Visualisation on-chain de tous les jobs
-│
-├── deployments/
-│   └── base-sepolia.json            # Adresses des contrats déployés + config
-│
-├── test/                            # Tests Hardhat (à compléter)
-│   ├── unit/
-│   └── integration/
-│
-├── .env.example                     # Template des variables d'environnement
-├── CLAUDE.md                        # Contexte projet pour Claude Code
-├── hardhat.config.ts                # Configuration Hardhat + Solidity 0.8.24
-├── package.json
-└── tsconfig.json
-```
-
----
-
-## Quick Start — Testnet live
-
-
-Les contrats sont déployés et vérifiés sur Base Sepolia. Voici comment interagir avec le protocole en 5 minutes.
-
-### Contrats déployés (Base Sepolia)
-
-| Contrat | Adresse | Basescan |
-|---|---|---|
-| AgentJobManager | `0x64eC3AcEEc90D6a441a552fE862A2bc021e3AfF0` | [voir](https://sepolia.basescan.org/address/0x64eC3AcEEc90D6a441a552fE862A2bc021e3AfF0#readContract) |
-| EvaluatorRegistry | `0xDd8366490ff9EF270C120f131442ab7d2fe08daa` | [voir](https://sepolia.basescan.org/address/0xDd8366490ff9EF270C120f131442ab7d2fe08daa#readContract) |
-| ReputationBridge | `0xAe54F935CA5c9f26836aDC038a2DCB62f321b6e6` | [voir](https://sepolia.basescan.org/address/0xAe54F935CA5c9f26836aDC038a2DCB62f321b6e6#readContract) |
-| ProtocolToken (VRT) | `0xc2D1C7bC7ACCF842CA7627d8c873952Ff7AdC729` | [voir](https://sepolia.basescan.org/address/0xc2D1C7bC7ACCF842CA7627d8c873952Ff7AdC729#readContract) |
-| MockUSDC | `0x82b4721F98F5404063E8fC6A5F6A2DaaEce0Fb09` | [voir](https://sepolia.basescan.org/address/0x82b4721F98F5404063E8fC6A5F6A2DaaEce0Fb09#readContract) |
-
-### Démarrer l'API
+### Option A — TypeScript SDK
 
 ```bash
-# Variables d'environnement requises dans .env :
-# PRIVATE_KEY=0x...            (wallet deployer — joue le rôle d'évaluateur)
-# BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
-# WALLET_ENCRYPTION_KEY=...    (32 bytes hex, généré au premier lancement)
-
-cd api
-npm install
-npm run dev
-# → Agent Settlement API running on http://localhost:3000
+npm install @asp-sdk/sdk
 ```
 
-### Flow complet d'un job (curl)
+```typescript
+import AgentClient from '@asp-sdk/sdk'
 
-**1. Créer deux agents**
+const BASE_URL = 'https://agent-settlement-protocol-production.up.railway.app'
+
+// Create two agents. Each gets a managed wallet — no private key handling on your end.
+const alice = await AgentClient.createAgent('alice', BASE_URL)
+const bob   = await AgentClient.createAgent('bob',   BASE_URL)
+
+console.log('Alice address:', alice.address)
+console.log('Bob address:  ', bob.address)
+
+// Alice creates a job for Bob: 5 USDC, 60-minute deadline.
+const job = await alice.client.createJob({
+  providerAddress: bob.address,
+  budget: '5.00',
+  deadlineMinutes: 60,
+})
+
+// Fund the escrow. The API handles MockUSDC minting, ERC-20 approval,
+// and the on-chain fund() call — all in one request.
+await alice.client.fundJob(job.jobId)
+
+// Bob submits a deliverable.
+await bob.client.submitWork(job.jobId, 'Analysis complete. Results attached.')
+
+// Alice (acting as evaluator in this demo) approves — payment is released automatically.
+await alice.client.completeJob(job.jobId, 'Work accepted')
+
+// Watch job state from anywhere.
+const watcher = alice.client.watchJob(job.jobId)
+watcher.on('completed', (j) => console.log('Settled. Tx:', j.txHash))
+watcher.on('rejected',  (j) => console.log('Rejected. Refunded.'))
+watcher.on('error',     (e) => console.error('Polling error:', e))
+```
+
+### Option B — Google A2A adapter
+
+If your agent already speaks A2A, use the adapter to route tasks through the settlement layer transparently.
+
+```typescript
+import AgentClient, { A2AAdapter } from '@asp-sdk/sdk'
+
+const { client } = await AgentClient.createAgent('my-agent', BASE_URL)
+
+const adapter = new A2AAdapter({
+  client,
+  providerAddress: '0x...provider-agent-wallet...',
+  defaultBudget: '2.00',
+})
+
+// One call: creates the job, funds escrow, waits for terminal state, returns result.
+const result = await adapter.executeTask({
+  id: crypto.randomUUID(),
+  message: {
+    role: 'user',
+    parts: [{ type: 'text', text: 'Summarize this document.' }],
+  },
+})
+
+console.log(result.status) // 'completed' | 'failed' | 'canceled'
+```
+
+### Option C — curl against the live API
+
+**Create agents**
 
 ```bash
-# Agent Client
-curl -X POST http://localhost:3000/v1/agents \
+# Client agent
+curl -s -X POST https://agent-settlement-protocol-production.up.railway.app/v1/agents \
   -H "Content-Type: application/json" \
-  -d '{"name": "Agent Alice"}'
-# → { agentId, address, apiKey }
+  -d '{"name": "alice"}' | jq .
+# { "agentId": "...", "address": "0x...", "apiKey": "..." }
 
-# Agent Provider
-curl -X POST http://localhost:3000/v1/agents \
+# Provider agent
+curl -s -X POST https://agent-settlement-protocol-production.up.railway.app/v1/agents \
   -H "Content-Type: application/json" \
-  -d '{"name": "Agent Bob"}'
-# → { agentId, address, apiKey }
+  -d '{"name": "bob"}' | jq .
 ```
 
-> Approvisionner les wallets avec des ETH Base Sepolia : [faucet.coinbase.com](https://faucet.coinbase.com)
-
-**2. Créer et financer un job**
+**Create a job**
 
 ```bash
-# Alice crée un job pour Bob (5 USDC, deadline 60 min)
-curl -X POST http://localhost:3000/v1/jobs \
+curl -s -X POST https://agent-settlement-protocol-production.up.railway.app/v1/jobs \
   -H "Content-Type: application/json" \
   -H "x-api-key: <ALICE_API_KEY>" \
-  -d '{"providerAddress": "<BOB_ADDRESS>", "budget": "5.00", "deadlineMinutes": 60}'
-# → { jobId: "1", txHash, basescanUrl, status: "open" }
-
-# Alice finance l'escrow (mint MockUSDC + approve + fund on-chain)
-curl -X POST http://localhost:3000/v1/jobs/1/fund \
-  -H "x-api-key: <ALICE_API_KEY>"
-# → { jobId: "1", txHash, basescanUrl, status: "funded" }
+  -d '{
+    "providerAddress": "<BOB_ADDRESS>",
+    "budget": "5.00",
+    "deadlineMinutes": 60
+  }' | jq .
+# { "jobId": "1", "txHash": "0x...", "basescanUrl": "...", "status": "open" }
 ```
 
-**3. Bob soumet son livrable**
+**Fund the escrow**
 
 ```bash
-curl -X POST http://localhost:3000/v1/jobs/1/submit \
+curl -s -X POST https://agent-settlement-protocol-production.up.railway.app/v1/jobs/1/fund \
+  -H "x-api-key: <ALICE_API_KEY>" | jq .
+# { "jobId": "1", "status": "processing" }  ← async, poll with GET /v1/jobs/1
+```
+
+**Submit a deliverable**
+
+```bash
+curl -s -X POST https://agent-settlement-protocol-production.up.railway.app/v1/jobs/1/submit \
   -H "Content-Type: application/json" \
   -H "x-api-key: <BOB_API_KEY>" \
-  -d '{"deliverable": "rapport_final.pdf — tâche terminée"}'
-# → { jobId: "1", txHash, deliverableHash, status: "submitted" }
+  -d '{"deliverable": "Task output or IPFS CID"}' | jq .
 ```
 
-**4. L'évaluateur approuve — paiement automatique**
+**Complete — evaluator approves, payment is released**
 
 ```bash
-curl -X POST http://localhost:3000/v1/jobs/1/complete \
+curl -s -X POST https://agent-settlement-protocol-production.up.railway.app/v1/jobs/1/complete \
   -H "Content-Type: application/json" \
   -H "x-api-key: <ALICE_API_KEY>" \
-  -d '{"reason": "Travail validé"}'
-# → { jobId: "1", txHash, basescanUrl, status: "completed" }
+  -d '{"reason": "Deliverable accepted"}' | jq .
+# { "jobId": "1", "txHash": "0x...", "status": "completed" }
 ```
 
-**5. Vérifier les soldes**
+**Check Bob's balance — 4.975 USDC (5 USDC minus 0.5% protocol fee)**
 
 ```bash
-curl http://localhost:3000/v1/agents/<BOB_AGENT_ID>/balance
-# → { usdcBalance: "4.975" }  ← 5 USDC moins 0.5% de protocol fee
-```
-
-### Monitorer les transactions on-chain
-
-```bash
-npx hardhat run scripts/monitor.ts --network base-sepolia
-```
-
-Affiche l'historique complet de tous les jobs :
-
-```
-─── Job #1  [Completed ✓]
-  [39228759] JobCreated   client=0xAd6334... provider=0x7eE67c...
-  [39228774] JobFunded    amount=5.0 USDC
-  [39229121] JobSubmitted deliverable=0x527262...
-  [39229127] JobCompleted payment=4.975 USDC  fee=0.025 USDC
+curl -s https://agent-settlement-protocol-production.up.railway.app/v1/agents/<BOB_AGENT_ID>/balance \
+  -H "x-api-key: <BOB_API_KEY>" | jq .
 ```
 
 ---
 
-## Installation et démarrage
+## REST API Reference
 
-### Prérequis
+Base URL: `https://agent-settlement-protocol-production.up.railway.app`
 
-Node.js 18+, npm, Git. Pour déployer vos propres contrats : un wallet avec des ETH de test sur Base Sepolia (faucet : [faucet.quicknode.com/base/sepolia](https://faucet.quicknode.com/base/sepolia)).
+Authentication: pass `x-api-key: <your-api-key>` in the request header. The API key is returned at agent creation and is never retrievable again.
 
-### Installation
+Rate limits: 120 requests / 15 min per IP globally. Agent creation is capped at 3 per hour per IP (each creation seeds the new wallet with ETH from the deployer).
 
-```bash
-git clone https://github.com/hugobiais/agent-settlement-protocol.git
-cd agent-settlement-protocol
-npm install          # contrats + scripts
-cd api && npm install  # API REST
-cd ../sdk && npm install && npm run build  # SDK TypeScript
-```
-
-### Configuration
-
-```bash
-cp .env.example .env
-# Renseigner PRIVATE_KEY, BASE_SEPOLIA_RPC_URL, WALLET_ENCRYPTION_KEY
-```
-
-Variables requises :
-
-| Variable | Obligatoire | Description |
-|---|---|---|
-| `PRIVATE_KEY` | Oui | Clé privée du wallet deployer (testnet uniquement) |
-| `BASE_SEPOLIA_RPC_URL` | Oui | RPC Base Sepolia (ex: `https://sepolia.base.org`) |
-| `WALLET_ENCRYPTION_KEY` | Oui (API) | 32 bytes hex pour chiffrer les wallets managés |
-| `ETHERSCAN_API_KEY` | Non | Vérification contrats via Etherscan V2 |
-
-### Compilation des contrats
-
-```bash
-npx hardhat compile
-# → artifacts/ + typechain-types/ générés
-```
-
-### Lancer les tests
-
-```bash
-npx hardhat test
-npx hardhat coverage
-```
-
----
-
-## Smart contracts
-
-### AgentJobManager.sol
-
-Contrat central du protocole. Il implémente fidèlement l'interface ERC-8183 et y ajoute notre Fee Hook qui prélève 0,5% (50 bps) à chaque `complete()`. Le fee rate est un paramètre gouvernable (maximum 5%) modifiable via vote DAO.
-
-Les transitions d'état sont gérées comme une machine à états stricte : toute tentative de transition invalide reverte avec un custom error qui encode l'état actuel et l'état attendu, facilitant le debugging et le monitoring.
-
-```solidity
-// Exemple d'utilisation directe (le SDK abstrait ces appels)
-uint256 jobId = jobManager.createJob(
-    providerAddress,
-    address(0),      // 0x0 = assignation automatique depuis EvaluatorRegistry
-    usdcAddress,
-    block.timestamp + 1 hours
-);
-jobManager.setBudget(jobId, 5_000_000); // 5 USDC (6 décimales)
-usdc.approve(address(jobManager), 5_000_000);
-jobManager.fund(jobId, 5_000_000);
-```
-
-### EvaluatorRegistry.sol
-
-Registre décentralisé des évaluateurs. Pour être éligible, un participant doit staker un minimum de tokens (`minEvaluatorStake`, gouvernable). La sélection d'un évaluateur pour un job mélange plusieurs sources d'entropie (block.prevrandao, jobId, timestamp, adresse du client) pour résister au front-running.
-
-Le mécanisme de slashing est déclenché exclusivement par `AgentJobManager` — jamais directement — garantissant que seuls les outcomes vérifiés on-chain peuvent affecter le stake d'un évaluateur.
-
-### ReputationBridge.sol
-
-Contrat stateless (il ne détient jamais de fonds) qui écoute les événements de `AgentJobManager` et appelle `IERC8004ReputationRegistry.recordOutcome()` pour chaque job Terminal. Il construit ainsi la réputation interopérable des agents, visible par tout protocole compatible ERC-8004.
-
-### ProtocolToken.sol
-
-Token ERC-20 avec `ERC20Votes` pour la gouvernance on-chain (délégation de vote compatible Governor), `ERC20Burnable` pour le mécanisme de burn, et un rôle `MINTER_ROLE` contrôlé par le DAO pour les émissions futures.
-
----
-
-## API REST
-
-Serveur Express (`api/`) qui expose le protocole via HTTP. Il gère des wallets managés chiffrés (AES-256-GCM) pour chaque agent — le développeur n'a jamais à manipuler de clés privées directement.
-
-### Démarrage
-
-```bash
-cd api && npm run dev
-# → Agent Settlement API running on http://localhost:3000
-```
-
-### Endpoints
-
-| Méthode | Chemin | Auth | Description |
+| Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/v1/agents` | — | Crée un agent + wallet managé |
-| `GET` | `/v1/agents/:id/balance` | — | Soldes ETH + USDC |
-| `POST` | `/v1/jobs` | `x-api-key` | Crée un job on-chain |
-| `GET` | `/v1/jobs` | `x-api-key` | Liste les jobs de l'agent |
-| `GET` | `/v1/jobs/:id` | — | État live on-chain |
-| `POST` | `/v1/jobs/:id/fund` | `x-api-key` | Mint → approve → fund escrow |
-| `POST` | `/v1/jobs/:id/submit` | `x-api-key` | Provider soumet le livrable |
-| `POST` | `/v1/jobs/:id/complete` | `x-api-key` | Évaluateur approuve → paiement |
-| `POST` | `/v1/jobs/:id/reject` | `x-api-key` | Évaluateur rejette → remboursement |
+| `POST` | `/v1/agents` | — | Create a new agent and its managed wallet. Returns `agentId`, `address`, `apiKey`. |
+| `GET` | `/v1/agents/:id/balance` | `x-api-key` | Returns current ETH and USDC balances for the agent wallet. |
+| `POST` | `/v1/jobs` | `x-api-key` | Create a job on-chain. Body: `providerAddress`, `budget` (string USDC), `deadlineMinutes`. Synchronous — returns `txHash`. |
+| `GET` | `/v1/jobs` | `x-api-key` | List all jobs belonging to the authenticated agent. |
+| `GET` | `/v1/jobs/:id` | `x-api-key` | Fetch live job state, queried directly from the contract. |
+| `POST` | `/v1/jobs/:id/fund` | `x-api-key` | Mint MockUSDC, approve the contract, call `fund()` on-chain. Returns HTTP 202 — use `watchJob` or poll `GET /v1/jobs/:id` for the final state. |
+| `POST` | `/v1/jobs/:id/submit` | `x-api-key` | Provider submits a deliverable string. The hash is stored on-chain. Returns HTTP 202. |
+| `POST` | `/v1/jobs/:id/complete` | `x-api-key` | Evaluator approves the deliverable. Triggers on-chain payment to provider. Returns HTTP 202. |
+| `POST` | `/v1/jobs/:id/reject` | `x-api-key` | Evaluator rejects the deliverable. Triggers full refund to client. Synchronous — returns `txHash`. |
+| `POST` | `/v1/faucet/usdc` | — | Mint test USDC directly to a given address (testnet only). Body: `address`, `amount`. |
+| `GET` | `/health` | — | Returns API and blockchain connectivity status. |
+
+Async endpoints (`fund`, `submit`, `complete`) return `{ "jobId": "...", "status": "processing" }` immediately and execute the on-chain transaction in the background. The transaction has a 90-second timeout. Use `GET /v1/jobs/:id` or the SDK's `watchJob` to track the final state.
 
 ---
 
-## SDK TypeScript
+## SDK Reference
 
-Package `@asp/sdk` indépendant (zéro dépendance runtime). Il parle exclusivement à l'API REST — aucune interaction blockchain directe.
+### `AgentClient` (static)
 
-### Build
+| Method | Returns | Description |
+|---|---|---|
+| `AgentClient.createAgent(name, baseUrl?)` | `{ client, agentId, address, apiKey }` | Create a new agent with a managed wallet. |
+| `AgentClient.getBalance(agentId, baseUrl?)` | `{ ethBalance, usdcBalance }` | Fetch balances without authentication. |
 
-```bash
-cd sdk && npm install && npm run build
-```
+### `AgentClient` (instance)
 
-### Utilisation
+| Method | Returns | Description |
+|---|---|---|
+| `client.createJob(params)` | `JobResult` | Synchronous. Returns `txHash` and `basescanUrl`. |
+| `client.fundJob(jobId)` | `AsyncJobResult` | Async (202). Poll with `watchJob`. |
+| `client.submitWork(jobId, deliverable)` | `AsyncJobResult` | Async (202). |
+| `client.completeJob(jobId, reason?)` | `AsyncJobResult` | Async (202). Evaluator only. |
+| `client.rejectJob(jobId, reason?)` | `JobResult` | Synchronous. Evaluator only. |
+| `client.watchJob(jobId, intervalMs?)` | `JobWatcher` | Returns an EventEmitter that polls until a terminal state. |
 
-```typescript
-import AgentClient from '@asp/sdk'
+### `JobWatcher` events
 
-// Créer un agent (retourne instance + apiKey)
-const { client, agentId, address } = await AgentClient.createAgent('Alice')
+| Event | Payload | Description |
+|---|---|---|
+| `update` | `(status, job)` | Fired on every status change detected by the poller. |
+| `funded` | `(job)` | Job escrow has been funded on-chain. |
+| `submitted` | `(job)` | Provider has submitted a deliverable. |
+| `completed` | `(job)` | Terminal. Funds released to provider. |
+| `rejected` | `(job)` | Terminal. Funds returned to client. |
+| `expired` | `(job)` | Terminal. Deadline passed. |
+| `error` | `(err)` | Non-fatal polling error. The watcher continues running. |
 
-// Créer et financer un job
-const job = await client.createJob({
-  providerAddress: '0x...adresse-de-Bob...',
-  budget: '5.00',
-  deadlineMinutes: 60
-})
-await client.fundJob(job.jobId)
-
-// Surveiller l'état en temps réel (polling automatique)
-const watcher = client.watchJob(job.jobId)
-watcher.on('update', (status) => console.log('Nouvel état :', status))
-watcher.on('complete', () => console.log('Paiement libéré'))
-watcher.on('rejected', () => console.log('Livrable rejeté'))
-watcher.on('error', console.error)
-
-// Consulter le solde d'un agent
-const balance = await AgentClient.getBalance(agentId)
-console.log(balance.usdcBalance) // "4.975"
-```
-
-### Gestion des erreurs
+### Error types
 
 ```typescript
-import { ApiError, JobNotFoundError, InvalidStateError } from '@asp/sdk'
+import { ApiError, JobNotFoundError, InvalidStateError } from '@asp-sdk/sdk'
 
 try {
   await client.fundJob('999')
 } catch (e) {
-  if (e instanceof JobNotFoundError) { /* job inexistant */ }
-  if (e instanceof InvalidStateError) { /* mauvais état (ex: déjà funded) */ }
-  if (e instanceof ApiError) { console.log(e.status, e.code) }
+  if (e instanceof JobNotFoundError) { /* job does not exist */ }
+  if (e instanceof InvalidStateError) { /* wrong state transition (e.g. already funded) */ }
+  if (e instanceof ApiError) { console.log(e.status, e.code, e.message) }
 }
 ```
 
 ---
 
-## Tests
+## Standards
 
-### Philosophie
+### ERC-8183 — Agentic Commerce
 
-Les tests de ce projet vérifient des **invariants**, pas des implémentations. Un invariant est une propriété qui doit être vraie dans tous les états valides du contrat.
+Proposed 10 March 2026 by Davide Crapis (Ethereum Foundation, dAI team) and Virtuals Protocol. Defines the minimal primitive for trustless commerce between agents: a four-state job (`OPEN → FUNDED → SUBMITTED → TERMINAL`), three roles (Client, Provider, Evaluator), and an extension mechanism via Hooks.
 
-Les quatre invariants fondamentaux d'`AgentJobManager` sont : le budget d'un job est toujours zéro si son statut est Terminal ; l'Evaluator d'un job Funded ou après n'est jamais `address(0)` ; la somme de tous les budgets en escrow est toujours égale au solde en tokens du contrat ; un job ne peut jamais revenir à un état antérieur.
+`AgentJobManager.sol` implements the full `IAgentJobManager` interface. All state transitions emit the specified events. The fee hook is implemented as an ERC-8183 Hook, not a modification of the core logic.
 
-### Couverture minimale exigée avant déploiement testnet
+ERC-8183 spec: [eips.ethereum.org/EIPS/eip-8183](https://eips.ethereum.org/EIPS/eip-8183)
 
-Toutes les transitions d'état dans les deux sens (nominal et revert), tous les custom errors avec leurs paramètres exacts, les quatre invariants fondamentaux vérifiés en post-condition de chaque opération, au moins un test de reentrancy par fonction qui transfère des fonds, et un test d'expiration avec simulation du passage du temps via `time.increase()` de Hardhat.
+### ERC-8004 — Trustless Agents
 
-### Lancer les tests
+Proposed August 2025 by Marco De Rossi (MetaMask), Davide Crapis (Ethereum Foundation), Jordan Ellis (Google), and Erik Reppel (Coinbase). Defines on-chain identity and reputation for agents.
+
+`ReputationBridge.sol` calls `IERC8004ReputationRegistry.recordOutcome()` after every terminal job, building an interoperable reputation record for providers and evaluators visible to any ERC-8004-compatible protocol.
+
+### x402 — Agent Payments (Coinbase)
+
+The x402 protocol enables agents to send and receive micropayments over HTTP using the `402 Payment Required` response code. The SDK wallet model is compatible with x402: an agent can pre-fund its managed wallet via x402 and use those funds to pay for jobs on this protocol.
+
+### Google A2A
+
+The A2A protocol (Linux Foundation, June 2025) standardizes agent-to-agent task delegation. The SDK ships an `A2AAdapter` class that receives `A2ATask` objects, translates them into ERC-8183 jobs, and returns results in the A2A `TaskResult` format. This protocol does not replace A2A — it adds the economic settlement layer that A2A intentionally omits.
+
+---
+
+## Security
+
+### Implementation posture
+
+All contracts follow Checks-Effects-Interactions without exception. Fund-transferring functions are guarded with OpenZeppelin's `ReentrancyGuard`. All token transfers use `SafeERC20`. Refunds use the pull-over-push pattern to prevent griefing. Access control on sensitive functions uses OpenZeppelin's `AccessControl` with named roles.
+
+Slashing in `EvaluatorRegistry` can only be triggered by `AgentJobManager` — never by an external caller — ensuring that stake can only be reduced as a consequence of a verified on-chain outcome.
+
+### Current status
+
+This project has been functionally tested on Base Sepolia. A complete job lifecycle (create, fund, submit, complete) has been verified on-chain with real transactions. The contracts have **not** undergone a professional security audit.
+
+**Do not use this protocol with real funds before a complete audit by an independent security firm.**
+
+Planned audit scope before mainnet: full smart contract review with focus on the slashing mechanism, evaluator selection entropy, fee accounting, and reentrancy surface. Firms under consideration: Trail of Bits, OpenZeppelin Security.
+
+### Reporting vulnerabilities
+
+Do not open a public issue for security vulnerabilities. Send a detailed report to the maintainers with a description of the issue, a step-by-step exploit scenario, and the estimated impact. We will respond within 48 hours.
+
+---
+
+## Local Development
+
+### Prerequisites
+
+Node.js 18+, npm. A Base Sepolia wallet with test ETH for deploying contracts ([faucet.quicknode.com/base/sepolia](https://faucet.quicknode.com/base/sepolia)).
+
+### Setup
 
 ```bash
-# Suite complète avec rapport de gas
+git clone https://github.com/Demsys/agent-settlement-protocol.git
+cd agent-settlement-protocol
+
+# Root — Hardhat + contract compilation
+npm install
+npx hardhat compile
+
+# API
+cd api && npm install
+
+# SDK
+cd ../sdk && npm install && npm run build
+```
+
+### Environment
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `BASE_SEPOLIA_RPC_URL` | Yes | Base Sepolia RPC endpoint (e.g. `https://sepolia.base.org`). |
+| `WALLET_ENCRYPTION_KEY` | Yes (API) | 32-byte hex key used to encrypt managed agent wallets at rest (AES-256-GCM). |
+| `PRIVATE_KEY` | Recommended | Deployer wallet private key. Required for faucet and evaluator seeding. |
+| `ETHERSCAN_API_KEY` | No | Used by Hardhat for contract verification via Etherscan V2. |
+
+### Run the API locally
+
+```bash
+cd api && npm run dev
+# Agent Settlement API running on http://localhost:3000
+```
+
+### Deploy your own contracts
+
+```bash
+npx hardhat run scripts/deploy.ts --network base-sepolia
+# Addresses written to deployments/base-sepolia.json
+```
+
+### Tests
+
+```bash
+# Full suite with gas report
 REPORT_GAS=true npx hardhat test
 
-# Test unique par nom
-npx hardhat test --grep "should resist reentrancy"
+# Single test by name
+npx hardhat test --grep "should revert on invalid state transition"
 
-# Coverage HTML dans coverage/
+# Coverage report (output in coverage/)
 npx hardhat coverage
 ```
 
----
-
-## Déploiement
-
-### Réseau de développement — Base Sepolia uniquement
-
-Tout déploiement pendant la phase de développement se fait exclusivement sur Base Sepolia (chain ID 84532). Aucun déploiement sur Base mainnet avant la réalisation d'un audit de sécurité professionnel complet par une firme indépendante.
+### Monitor on-chain activity
 
 ```bash
-# Déploiement sur Base Sepolia
-npx hardhat run scripts/deploy.ts --network base-sepolia
-
-# Vérification des contrats sur Basescan
-npx hardhat run scripts/verify.ts --network base-sepolia
+npx hardhat run scripts/monitor.ts --network base-sepolia
 ```
 
-### Ordre de déploiement
+Prints the full event history for all jobs:
 
-L'ordre est déterminé par les dépendances entre contrats. `ProtocolToken` n'a aucune dépendance et se déploie en premier. `EvaluatorRegistry` dépend de `ProtocolToken`. `AgentJobManager` dépend des deux précédents. `ReputationBridge` dépend d'`AgentJobManager`.
-
-Après déploiement, deux transactions de configuration sont nécessaires : appeler `AgentJobManager.setFeeRecipient(ProtocolToken.address)` pour connecter le fee engine, et `EvaluatorRegistry.setJobManager(AgentJobManager.address)` pour autoriser le slashing.
-
----
-
-## Sécurité
-
-### Principes non-négociables
-
-Tous les contrats implémentent le pattern **Checks-Effects-Interactions** (CEI) sans exception. Toutes les fonctions qui transfèrent des fonds sont protégées par `ReentrancyGuard`. Tous les transferts de tokens utilisent `SafeERC20` — jamais `token.transfer()` directement. Les remboursements utilisent le pattern **Pull over Push** pour résister au griefing.
-
-### Signalement de vulnérabilités
-
-Ce protocole est en développement actif et n'a pas encore fait l'objet d'un audit professionnel. Si vous identifiez une vulnérabilité de sécurité, merci de **ne pas l'ouvrir comme issue publique**. Envoyez un rapport détaillé à [security@votre-domaine.com] avec la description de la vulnérabilité, un scénario d'exploit pas à pas, et l'impact estimé.
-
-### Audits planifiés
-
-Un audit de sécurité professionnel complet est planifié avant tout déploiement sur Base mainnet. Les firmes envisagées sont Trail of Bits, OpenZeppelin Security, et Certik. L'audit couvrira l'intégralité des smart contracts, avec une attention particulière aux mécanismes de slashing et à l'accès à l'Evaluator.
+```
+--- Job #1  [Completed]
+  [39228759] JobCreated    client=0xAd63... provider=0x7eE6...
+  [39228774] JobFunded     amount=5.0 USDC
+  [39229121] JobSubmitted  deliverable=0x5272...
+  [39229127] JobCompleted  payment=4.975 USDC  fee=0.025 USDC
+```
 
 ---
 
-## Feuille de route
+## Contributing
 
-### Phase 0 — Fondations ✅
+Contributions are welcome, particularly on:
 
-Interface `IAgentJobManager.sol` (ERC-8183), 5 contrats Solidity, déploiement sur Base Sepolia, vérification Sourcify, API REST 9 endpoints, SDK TypeScript `@asp/sdk`.
+- Smart contract Hooks (new ERC-8183 extension implementations)
+- SDK adapters for additional agent frameworks (AutoGen, CrewAI, LangGraph)
+- Test coverage (the suite targets >95% branch coverage before mainnet)
 
-**Prouvé en production (testnet)** : Job #4 complété on-chain — Alice a mis 5 USDC en escrow, Bob a soumis un livrable, l'évaluateur a approuvé, Bob a reçu 4,975 USDC (fee 0,5% déduit).
+Before submitting a pull request: ensure all tests pass (`npx hardhat test`), follow the existing code style (Solidity 0.8.24, TypeScript strict mode, comments in English), and update the relevant documentation if your change introduces a new pattern.
 
-### Phase 1 — Solidification (en cours)
-
-Suite de tests Hardhat avec couverture >95%, script de démo end-to-end, adapter Google A2A, et documentation technique complète.
-
-### Phase 2 — Validation et traction
-
-Premier partenariat avec un projet AI Agent existant (ElizaOS, Virtuals Protocol, ou similaire), audit de sécurité préliminaire, et seed round.
-
-### Phase 3 — Lancement
-
-Audit de sécurité complet par une firme indépendante (Trail of Bits, OpenZeppelin Security), IDO / TGE sur Base, déploiement mainnet, objectif 500 agents actifs et 10 000 jobs/mois dans les 90 jours suivant le lancement.
+Open an issue first for significant changes — [github.com/Demsys/agent-settlement-protocol/issues](https://github.com/Demsys/agent-settlement-protocol/issues).
 
 ---
 
-## Contribuer
+## License
 
-Ce projet accueille les contributions, en particulier sur les smart contracts (nouvelles implémentations de Hooks), le SDK TypeScript (support de nouveaux frameworks d'agents), et la documentation technique.
-
-Avant de soumettre une Pull Request, assurez-vous que tous les tests passent (`npx hardhat test`), que le code Solidity a été examiné par le sous-agent `security-reviewer`, et que les skills de documentation ont été mis à jour si votre contribution introduit un nouveau pattern ou une nouvelle décision architecturale.
+MIT — see [LICENSE](./LICENSE).
 
 ---
 
-## Licence
-
-**Business Source License 1.1** — voir [LICENSE](./LICENSE) pour les détails complets.
-
-Le code source est librement lisible et auditable. L'usage commercial est soumis à licence jusqu'au **23 mars 2030**, date à laquelle la licence bascule automatiquement en **MIT**.
-
-Usage non-commercial (recherche, éducation, projets personnels) : libre et sans restriction.
-
----
-
-*Agent Settlement Protocol — Construire la couche de confiance pour l'économie agentique.*
-
-*ERC-8183 est un standard en cours de proposition (DRAFT). Ce projet est une implémentation de référence expérimentale. Ne pas utiliser avec des fonds réels avant un audit de sécurité complet.*
+*ERC-8183 is a draft standard (proposed March 2026). This is an experimental reference implementation. Do not use with real funds prior to a professional security audit.*
