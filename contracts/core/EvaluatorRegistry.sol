@@ -144,6 +144,12 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @param maximum  The maximum allowed warmup period (30 days).
     error WarmupPeriodTooLong(uint64 proposed, uint64 maximum);
 
+    /// @notice Thrown when setWarmupPeriod() is called with a period below the 1-day floor.
+    /// @dev AUDIT-H4: prevents instant Sybil attacks via setWarmupPeriod(0).
+    /// @param proposed The warmup period that was proposed.
+    /// @param minimum  The minimum allowed warmup period (1 day).
+    error WarmupPeriodTooShort(uint64 proposed, uint64 minimum);
+
     // ── Governance timelock errors ────────────────────────────────────────────
 
     /// @notice Thrown when execute*() is called but no proposal exists for that key.
@@ -177,6 +183,14 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @dev 30 days is already a very conservative anti-Sybil window. A higher value
     ///      would risk starving the registry of eligible evaluators during bootstrapping.
     uint64 public constant MAX_WARMUP_PERIOD = 30 days;
+
+    /// @notice Absolute floor on the warmup period, enforced in setWarmupPeriod().
+    /// @dev AUDIT-H4: setWarmupPeriod(0) would instantly eliminate all anti-Sybil
+    ///      protection without any governance delay. A floor of 1 day ensures the
+    ///      warmup window cannot be bypassed instantaneously even by the owner.
+    ///      A compromised owner key cannot trivially mount a Sybil attack by zeroing
+    ///      the warmup — they would still need to wait 1 day per evaluator cohort.
+    uint64 public constant MIN_WARMUP_PERIOD = 1 days;
 
     /// @notice Mandatory delay between a governance proposal and its execution.
     /// @dev FINDING-005: mirrors the same constant in AgentJobManager.
@@ -668,6 +682,8 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      */
     function setWarmupPeriod(uint64 newPeriod) external onlyOwner {
         if (newPeriod > MAX_WARMUP_PERIOD) revert WarmupPeriodTooLong(newPeriod, MAX_WARMUP_PERIOD);
+        // AUDIT-H4: floor prevents instant anti-Sybil bypass via setWarmupPeriod(0).
+        if (newPeriod < MIN_WARMUP_PERIOD) revert WarmupPeriodTooShort(newPeriod, MIN_WARMUP_PERIOD);
         warmupPeriod = newPeriod;
         emit WarmupPeriodUpdated(newPeriod);
     }

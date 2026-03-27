@@ -63,9 +63,10 @@ describe("ProtocolToken", function () {
       expect(await token.hasRole(DEFAULT_ADMIN, deployer.address)).to.be.true;
     });
 
-    it("deployer is the Ownable owner", async function () {
+    it("deployer holds DEFAULT_ADMIN_ROLE (Ownable removed in AUDIT-M8)", async function () {
       const { token, deployer } = await loadFixture(deployTokenFixture);
-      expect(await token.owner()).to.equal(deployer.address);
+      // Ownable was removed — admin identity is now exclusively via AccessControl.
+      expect(await token.hasRole(DEFAULT_ADMIN, deployer.address)).to.be.true;
     });
   });
 

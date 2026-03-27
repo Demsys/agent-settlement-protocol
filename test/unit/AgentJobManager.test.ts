@@ -215,15 +215,30 @@ describe("AgentJobManager", function () {
       ).to.be.revertedWithCustomError(manager, "ZeroAddress").withArgs("token");
     });
 
-    it("should allow client == provider (single-agent MVP pattern)", async function () {
+    it("should revert SelfAssignment when client == provider and selfServiceEnabled is false (default)", async function () {
       const { manager, usdc, client } = await loadFixture(deployFixture);
       const deadline = BigInt(await time.latest()) + 3600n;
 
-      // client == provider is explicitly allowed: in single-agent deployments the same
-      // wallet funds the escrow and submits the deliverable.
+      // AUDIT-H1: selfServiceEnabled defaults to false — client == provider must revert.
       await expect(
         manager.connect(client).createJob(
-          client.address,  // provider == client — now allowed
+          client.address,
+          ethers.ZeroAddress,
+          await usdc.getAddress(),
+          deadline
+        )
+      ).to.be.revertedWithCustomError(manager, "SelfAssignment").withArgs("provider");
+    });
+
+    it("should allow client == provider when setSelfServiceEnabled(true)", async function () {
+      const { manager, usdc, client, deployer } = await loadFixture(deployFixture);
+      const deadline = BigInt(await time.latest()) + 3600n;
+
+      await manager.connect(deployer).setSelfServiceEnabled(true);
+
+      await expect(
+        manager.connect(client).createJob(
+          client.address,
           ethers.ZeroAddress,
           await usdc.getAddress(),
           deadline

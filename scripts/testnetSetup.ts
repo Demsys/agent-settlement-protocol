@@ -24,10 +24,14 @@ async function main() {
     ? { maxFeePerGas: fd.maxFeePerGas * 2n, maxPriorityFeePerGas: (fd.maxPriorityFeePerGas ?? fd.maxFeePerGas) * 2n }
     : { gasPrice: (fd.gasPrice ?? 1_000_000_000n) * 2n }
 
-  console.log("\nSetting warmupPeriod to 0…")
-  const tx = await registry.setWarmupPeriod(0, gas)
+  // AUDIT-H4: setWarmupPeriod(0) is now blocked (MIN_WARMUP_PERIOD = 1 day).
+  // Setting to 1 day is sufficient for testnet: any evaluator who staked at deploy
+  // time will be past the 1-day threshold by the time this script is run.
+  const ONE_DAY = 86400
+  console.log("\nSetting warmupPeriod to 1 day (minimum allowed)…")
+  const tx = await registry.setWarmupPeriod(ONE_DAY, gas)
   await tx.wait(1)
-  console.log(`  ✓ warmupPeriod = 0 — tx: ${tx.hash}`)
+  console.log(`  ✓ warmupPeriod = 1 day — tx: ${tx.hash}`)
 
   const eligible = await registry.isEligible(deployer.address)
   console.log(`\nDeployer eligible: ${eligible}`)

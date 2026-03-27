@@ -29,6 +29,7 @@ export interface EvaluatorRegistryInterface extends Interface {
       | "GOVERNANCE_DELAY"
       | "MAX_ACTIVE_EVALUATORS"
       | "MAX_WARMUP_PERIOD"
+      | "MIN_WARMUP_PERIOD"
       | "assignEvaluator"
       | "cancelProposal"
       | "executeJobManager"
@@ -80,6 +81,10 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "MAX_WARMUP_PERIOD",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "MIN_WARMUP_PERIOD",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -175,6 +180,10 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): Result;
   decodeFunctionResult(
     functionFragment: "MAX_WARMUP_PERIOD",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "MIN_WARMUP_PERIOD",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -497,6 +506,8 @@ export interface EvaluatorRegistry extends BaseContract {
 
   MAX_WARMUP_PERIOD: TypedContractMethod<[], [bigint], "view">;
 
+  MIN_WARMUP_PERIOD: TypedContractMethod<[], [bigint], "view">;
+
   assignEvaluator: TypedContractMethod<
     [jobId: BigNumberish],
     [string],
@@ -585,6 +596,9 @@ export interface EvaluatorRegistry extends BaseContract {
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "MAX_WARMUP_PERIOD"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "MIN_WARMUP_PERIOD"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "assignEvaluator"

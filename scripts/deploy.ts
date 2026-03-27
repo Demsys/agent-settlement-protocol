@@ -344,6 +344,30 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // ── Enable self-service mode for single-agent MVP ─────────────────────────
+  // AUDIT-H1: selfServiceEnabled defaults to false in the contract (prevents
+  // reputation farming). Enable here for the testnet MVP where the same wallet
+  // acts as both client and provider.
+  // ⚠ TODO: remove this step (or explicitly call setSelfServiceEnabled(false))
+  //          before deploying to mainnet for multi-party production use.
+  try {
+    const agentJobManager = await ethers.getContractAt(
+      "AgentJobManager",
+      agentJobManagerAddress,
+    )
+    const tx = await agentJobManager.setSelfServiceEnabled(true, await getFreshGasOverrides())
+    const receipt = await tx.wait(1)
+    if (receipt === null || receipt.status === 0) {
+      throw new Error("AgentJobManager.setSelfServiceEnabled transaction failed (status 0)")
+    }
+    logConfig(`AgentJobManager.setSelfServiceEnabled(true) — MVP single-agent mode`, receipt.hash)
+    console.log("  ⚠  NOTE: disable selfServiceEnabled before mainnet production deployment.")
+  } catch (err) {
+    console.error("\n  ERROR: AgentJobManager.setSelfServiceEnabled() failed.")
+    console.error(err)
+    process.exit(1)
+  }
+
   // ── Deployment manifest ──────────────────────────────────────────────────────
   // Persist all addresses and metadata so that the SDK and integration tests
   // can locate the contracts without re-querying the chain.
