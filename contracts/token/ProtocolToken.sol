@@ -7,7 +7,9 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+// AUDIT-M8: Ownable removed — it was imported but never used (no onlyOwner modifier
+// in this contract). Having both Ownable and AccessControl created two parallel admin
+// channels that could diverge. Pure AccessControl via DEFAULT_ADMIN_ROLE is sufficient.
 
 /**
  * @title ProtocolToken
@@ -27,7 +29,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  *                  initial supply is minted to the deployer). The deployer (Ownable owner)
  *                  can grant/revoke MINTER_ROLE via AccessControl.
  */
-contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessControl, Ownable {
+contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessControl {
 
     // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -38,6 +40,14 @@ contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessC
     /// @notice Initial supply minted to the deployer at construction (100 million tokens).
     uint256 public constant INITIAL_SUPPLY = 100_000_000 * 1e18;
 
+    /// @notice Hard cap on total supply (1 billion tokens = 10× initial supply).
+    /// @dev AUDIT-M9: without a cap, a compromised MINTER_ROLE key could hyperinflate
+    ///      the supply and destroy all token value, manipulate ERC20Votes governance,
+    ///      and corrupt the staking economics of EvaluatorRegistry.
+    ///      1 billion leaves 10× room for future staking rewards / ecosystem grants
+    ///      while hard-bounding catastrophic inflation.
+    uint256 public constant MAX_SUPPLY = 1_000_000_000 * 1e18;
+
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     /// @notice Thrown when mint() is called by an address without MINTER_ROLE.
@@ -45,6 +55,9 @@ contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessC
 
     /// @notice Thrown when mint() is called with a zero amount.
     error ZeroMintAmount();
+
+    /// @notice Thrown when mint() would push totalSupply above MAX_SUPPLY.
+    error MintExceedsMaxSupply(uint256 attempted, uint256 maximum);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
@@ -62,7 +75,6 @@ contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessC
     constructor()
         ERC20("Verdict", "VRT")
         ERC20Permit("Verdict")
-        Ownable(msg.sender)
     {
         // Grant admin and minter roles to the deployer.
         // The deployer will later grant MINTER_ROLE to the fee distribution contract
@@ -91,6 +103,8 @@ contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessC
         // CHECKS
         if (!hasRole(MINTER_ROLE, msg.sender)) revert UnauthorizedMinter(msg.sender);
         if (amount == 0) revert ZeroMintAmount();
+        // AUDIT-M9: hard cap prevents a compromised minter from hyperinflating supply.
+        if (totalSupply() + amount > MAX_SUPPLY) revert MintExceedsMaxSupply(totalSupply() + amount, MAX_SUPPLY);
 
         // EFFECTS + INTERACTIONS (mint has no external call risk — it only updates
         // internal balances and checkpoints; no reentrancy vector here)

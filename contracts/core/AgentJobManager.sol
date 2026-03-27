@@ -135,6 +135,13 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      Set via setReputationBridge(). Can be reset to address(0) to disable.
     address public reputationBridge;
 
+    /// @notice When true, the client and provider may be the same address.
+    /// @dev AUDIT-H1: disabled by default to prevent reputation farming via self-dealing
+    ///      (cycling funds to artificially inflate ERC-8004 scores without real work).
+    ///      Enable only for controlled single-agent MVP deployments where both roles
+    ///      are intentionally held by the same wallet. MUST be false on mainnet production.
+    bool public selfServiceEnabled;
+
     /// @notice Auto-incrementing job ID counter. Starts at 1 (0 is reserved as "no job").
     uint256 private nextJobId;
 
@@ -208,6 +215,9 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     // DeadlineExtended is declared in IAgentJobManager and inherited — not redeclared here.
     // It is emitted by both extendDeadline() (voluntary, client-initiated) and
     // submit() (automatic, when less than MIN_EVALUATION_WINDOW remains before deadline).
+
+    /// @notice Emitted when the self-service mode is toggled by the owner.
+    event SelfServiceToggled(bool enabled);
 
     /**
      * @notice Emitted when a Client reopens a Rejected job for a new execution attempt.
@@ -395,10 +405,11 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // which would prevent complete() from transferring the full agreed amount.
         if (!allowedTokens[token]) revert TokenNotAllowed(token);
 
-        // Note: client == provider is intentionally allowed. In single-agent deployments
-        // (MVP / testnet), the same wallet acts as both client and provider: it funds the
-        // escrow and later calls submit() with the work deliverable. The evaluator is always
-        // an independent third party (enforced below), so the trust guarantee is preserved.
+        // AUDIT-H1: by default, block client == provider to prevent reputation farming
+        // (self-dealing to inflate ERC-8004 scores without real counterparty work).
+        // selfServiceEnabled can be set to true by the owner for single-agent MVP deployments
+        // where both roles are intentionally held by the same wallet.
+        if (!selfServiceEnabled && provider == msg.sender) revert SelfAssignment("provider");
 
         // The client cannot be their own evaluator — would allow self-approval of work.
         // address(0) is allowed here (auto-assignment path).
@@ -1072,6 +1083,19 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         if (pendingChanges[key].executableAt == 0) revert NoProposalPending(key);
         delete pendingChanges[key];
         emit ProposalCancelled(key);
+    }
+
+    // ── Self-service mode ─────────────────────────────────────────────────────
+
+    /**
+     * @notice Enables or disables self-service mode (client == provider allowed).
+     * @dev AUDIT-H1: disabled by default to prevent reputation farming.
+     *      Enable for single-agent MVP deployments only. Set to false on mainnet.
+     * @param enabled True to allow client == provider, false to enforce separation.
+     */
+    function setSelfServiceEnabled(bool enabled) external onlyOwner {
+        selfServiceEnabled = enabled;
+        emit SelfServiceToggled(enabled);
     }
 
     // ── Token whitelist management ────────────────────────────────────────────

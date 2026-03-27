@@ -42,6 +42,7 @@ export interface ProtocolTokenInterface extends Interface {
       | "DEFAULT_ADMIN_ROLE"
       | "DOMAIN_SEPARATOR"
       | "INITIAL_SUPPLY"
+      | "MAX_SUPPLY"
       | "MINTER_ROLE"
       | "allowance"
       | "approve"
@@ -65,9 +66,7 @@ export interface ProtocolTokenInterface extends Interface {
       | "name"
       | "nonces"
       | "numCheckpoints"
-      | "owner"
       | "permit"
-      | "renounceOwnership"
       | "renounceRole"
       | "revokeRole"
       | "supportsInterface"
@@ -75,7 +74,6 @@ export interface ProtocolTokenInterface extends Interface {
       | "totalSupply"
       | "transfer"
       | "transferFrom"
-      | "transferOwnership"
   ): FunctionFragment;
 
   getEvent(
@@ -84,7 +82,6 @@ export interface ProtocolTokenInterface extends Interface {
       | "DelegateChanged"
       | "DelegateVotesChanged"
       | "EIP712DomainChanged"
-      | "OwnershipTransferred"
       | "RoleAdminChanged"
       | "RoleGranted"
       | "RoleRevoked"
@@ -105,6 +102,10 @@ export interface ProtocolTokenInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "INITIAL_SUPPLY",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "MAX_SUPPLY",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -191,7 +192,6 @@ export interface ProtocolTokenInterface extends Interface {
     functionFragment: "numCheckpoints",
     values: [AddressLike]
   ): string;
-  encodeFunctionData(functionFragment: "owner", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "permit",
     values: [
@@ -203,10 +203,6 @@ export interface ProtocolTokenInterface extends Interface {
       BytesLike,
       BytesLike
     ]
-  ): string;
-  encodeFunctionData(
-    functionFragment: "renounceOwnership",
-    values?: undefined
   ): string;
   encodeFunctionData(
     functionFragment: "renounceRole",
@@ -233,10 +229,6 @@ export interface ProtocolTokenInterface extends Interface {
     functionFragment: "transferFrom",
     values: [AddressLike, AddressLike, BigNumberish]
   ): string;
-  encodeFunctionData(
-    functionFragment: "transferOwnership",
-    values: [AddressLike]
-  ): string;
 
   decodeFunctionResult(functionFragment: "CLOCK_MODE", data: BytesLike): Result;
   decodeFunctionResult(
@@ -251,6 +243,7 @@ export interface ProtocolTokenInterface extends Interface {
     functionFragment: "INITIAL_SUPPLY",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "MAX_SUPPLY", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "MINTER_ROLE",
     data: BytesLike
@@ -298,12 +291,7 @@ export interface ProtocolTokenInterface extends Interface {
     functionFragment: "numCheckpoints",
     data: BytesLike
   ): Result;
-  decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "permit", data: BytesLike): Result;
-  decodeFunctionResult(
-    functionFragment: "renounceOwnership",
-    data: BytesLike
-  ): Result;
   decodeFunctionResult(
     functionFragment: "renounceRole",
     data: BytesLike
@@ -321,10 +309,6 @@ export interface ProtocolTokenInterface extends Interface {
   decodeFunctionResult(functionFragment: "transfer", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "transferFrom",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "transferOwnership",
     data: BytesLike
   ): Result;
 }
@@ -395,19 +379,6 @@ export namespace EIP712DomainChangedEvent {
   export type InputTuple = [];
   export type OutputTuple = [];
   export interface OutputObject {}
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
-export namespace OwnershipTransferredEvent {
-  export type InputTuple = [previousOwner: AddressLike, newOwner: AddressLike];
-  export type OutputTuple = [previousOwner: string, newOwner: string];
-  export interface OutputObject {
-    previousOwner: string;
-    newOwner: string;
-  }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
   export type Log = TypedEventLog<Event>;
@@ -541,6 +512,8 @@ export interface ProtocolToken extends BaseContract {
 
   INITIAL_SUPPLY: TypedContractMethod<[], [bigint], "view">;
 
+  MAX_SUPPLY: TypedContractMethod<[], [bigint], "view">;
+
   MINTER_ROLE: TypedContractMethod<[], [string], "view">;
 
   allowance: TypedContractMethod<
@@ -648,8 +621,6 @@ export interface ProtocolToken extends BaseContract {
 
   numCheckpoints: TypedContractMethod<[account: AddressLike], [bigint], "view">;
 
-  owner: TypedContractMethod<[], [string], "view">;
-
   permit: TypedContractMethod<
     [
       owner: AddressLike,
@@ -663,8 +634,6 @@ export interface ProtocolToken extends BaseContract {
     [void],
     "nonpayable"
   >;
-
-  renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
 
   renounceRole: TypedContractMethod<
     [role: BytesLike, callerConfirmation: AddressLike],
@@ -700,12 +669,6 @@ export interface ProtocolToken extends BaseContract {
     "nonpayable"
   >;
 
-  transferOwnership: TypedContractMethod<
-    [newOwner: AddressLike],
-    [void],
-    "nonpayable"
-  >;
-
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
   ): T;
@@ -721,6 +684,9 @@ export interface ProtocolToken extends BaseContract {
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "INITIAL_SUPPLY"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "MAX_SUPPLY"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "MINTER_ROLE"
@@ -849,9 +815,6 @@ export interface ProtocolToken extends BaseContract {
     nameOrSignature: "numCheckpoints"
   ): TypedContractMethod<[account: AddressLike], [bigint], "view">;
   getFunction(
-    nameOrSignature: "owner"
-  ): TypedContractMethod<[], [string], "view">;
-  getFunction(
     nameOrSignature: "permit"
   ): TypedContractMethod<
     [
@@ -866,9 +829,6 @@ export interface ProtocolToken extends BaseContract {
     [void],
     "nonpayable"
   >;
-  getFunction(
-    nameOrSignature: "renounceOwnership"
-  ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "renounceRole"
   ): TypedContractMethod<
@@ -906,9 +866,6 @@ export interface ProtocolToken extends BaseContract {
     [boolean],
     "nonpayable"
   >;
-  getFunction(
-    nameOrSignature: "transferOwnership"
-  ): TypedContractMethod<[newOwner: AddressLike], [void], "nonpayable">;
 
   getEvent(
     key: "Approval"
@@ -937,13 +894,6 @@ export interface ProtocolToken extends BaseContract {
     EIP712DomainChangedEvent.InputTuple,
     EIP712DomainChangedEvent.OutputTuple,
     EIP712DomainChangedEvent.OutputObject
-  >;
-  getEvent(
-    key: "OwnershipTransferred"
-  ): TypedContractEvent<
-    OwnershipTransferredEvent.InputTuple,
-    OwnershipTransferredEvent.OutputTuple,
-    OwnershipTransferredEvent.OutputObject
   >;
   getEvent(
     key: "RoleAdminChanged"
@@ -1017,17 +967,6 @@ export interface ProtocolToken extends BaseContract {
       EIP712DomainChangedEvent.InputTuple,
       EIP712DomainChangedEvent.OutputTuple,
       EIP712DomainChangedEvent.OutputObject
-    >;
-
-    "OwnershipTransferred(address,address)": TypedContractEvent<
-      OwnershipTransferredEvent.InputTuple,
-      OwnershipTransferredEvent.OutputTuple,
-      OwnershipTransferredEvent.OutputObject
-    >;
-    OwnershipTransferred: TypedContractEvent<
-      OwnershipTransferredEvent.InputTuple,
-      OwnershipTransferredEvent.OutputTuple,
-      OwnershipTransferredEvent.OutputObject
     >;
 
     "RoleAdminChanged(bytes32,bytes32,bytes32)": TypedContractEvent<

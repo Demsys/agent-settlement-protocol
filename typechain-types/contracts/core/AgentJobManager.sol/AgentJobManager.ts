@@ -97,7 +97,9 @@ export interface AgentJobManagerInterface extends Interface {
       | "renounceOwnership"
       | "reopen"
       | "reputationBridge"
+      | "selfServiceEnabled"
       | "setBudget"
+      | "setSelfServiceEnabled"
       | "submit"
       | "transferOwnership"
   ): FunctionFragment;
@@ -123,6 +125,7 @@ export interface AgentJobManagerInterface extends Interface {
       | "RefundPending"
       | "ReputationBridgeProposed"
       | "ReputationBridgeUpdated"
+      | "SelfServiceToggled"
       | "TokenAllowed"
       | "TokenDisallowed"
   ): EventFragment;
@@ -250,8 +253,16 @@ export interface AgentJobManagerInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "selfServiceEnabled",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "setBudget",
     values: [BigNumberish, BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "setSelfServiceEnabled",
+    values: [boolean]
   ): string;
   encodeFunctionData(
     functionFragment: "submit",
@@ -357,7 +368,15 @@ export interface AgentJobManagerInterface extends Interface {
     functionFragment: "reputationBridge",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "selfServiceEnabled",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "setBudget", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "setSelfServiceEnabled",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "submit", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "transferOwnership",
@@ -686,6 +705,18 @@ export namespace ReputationBridgeUpdatedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace SelfServiceToggledEvent {
+  export type InputTuple = [enabled: boolean];
+  export type OutputTuple = [enabled: boolean];
+  export interface OutputObject {
+    enabled: boolean;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace TokenAllowedEvent {
   export type InputTuple = [token: AddressLike];
   export type OutputTuple = [token: string];
@@ -886,8 +917,16 @@ export interface AgentJobManager extends BaseContract {
 
   reputationBridge: TypedContractMethod<[], [string], "view">;
 
+  selfServiceEnabled: TypedContractMethod<[], [boolean], "view">;
+
   setBudget: TypedContractMethod<
     [jobId: BigNumberish, amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
+
+  setSelfServiceEnabled: TypedContractMethod<
+    [enabled: boolean],
     [void],
     "nonpayable"
   >;
@@ -1042,12 +1081,18 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "reputationBridge"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
+    nameOrSignature: "selfServiceEnabled"
+  ): TypedContractMethod<[], [boolean], "view">;
+  getFunction(
     nameOrSignature: "setBudget"
   ): TypedContractMethod<
     [jobId: BigNumberish, amount: BigNumberish],
     [void],
     "nonpayable"
   >;
+  getFunction(
+    nameOrSignature: "setSelfServiceEnabled"
+  ): TypedContractMethod<[enabled: boolean], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "submit"
   ): TypedContractMethod<
@@ -1191,6 +1236,13 @@ export interface AgentJobManager extends BaseContract {
     ReputationBridgeUpdatedEvent.InputTuple,
     ReputationBridgeUpdatedEvent.OutputTuple,
     ReputationBridgeUpdatedEvent.OutputObject
+  >;
+  getEvent(
+    key: "SelfServiceToggled"
+  ): TypedContractEvent<
+    SelfServiceToggledEvent.InputTuple,
+    SelfServiceToggledEvent.OutputTuple,
+    SelfServiceToggledEvent.OutputObject
   >;
   getEvent(
     key: "TokenAllowed"
@@ -1415,6 +1467,17 @@ export interface AgentJobManager extends BaseContract {
       ReputationBridgeUpdatedEvent.InputTuple,
       ReputationBridgeUpdatedEvent.OutputTuple,
       ReputationBridgeUpdatedEvent.OutputObject
+    >;
+
+    "SelfServiceToggled(bool)": TypedContractEvent<
+      SelfServiceToggledEvent.InputTuple,
+      SelfServiceToggledEvent.OutputTuple,
+      SelfServiceToggledEvent.OutputObject
+    >;
+    SelfServiceToggled: TypedContractEvent<
+      SelfServiceToggledEvent.InputTuple,
+      SelfServiceToggledEvent.OutputTuple,
+      SelfServiceToggledEvent.OutputObject
     >;
 
     "TokenAllowed(address)": TypedContractEvent<
