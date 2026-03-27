@@ -90,6 +90,7 @@ describe("EvaluatorRegistry", function () {
 
       await protocolToken.connect(evaluatorA).approve(await registry.getAddress(), MIN_STAKE);
       await registry.connect(evaluatorA).stake(MIN_STAKE);
+      await time.increase(WARMUP_PERIOD + 1); // isEligible now includes warmup filter
 
       expect(await registry.isEligible(evaluatorA.address)).to.be.true;
       expect(await registry.getEvaluatorCount()).to.equal(1);
@@ -102,10 +103,9 @@ describe("EvaluatorRegistry", function () {
       await protocolToken.connect(evaluatorA).approve(await registry.getAddress(), MIN_STAKE);
       await registry.connect(evaluatorA).stake(MIN_STAKE);
       const after = await time.latest();
+      await time.increase(WARMUP_PERIOD + 1); // isEligible now includes warmup filter
 
-      // activeSince should be between the timestamps surrounding the stake tx
-      // We verify via assignEvaluator behavior (warmup not passed yet) instead
-      // of reading private storage — the public isEligible + warmup test covers this
+      // activeSince is set at stake time; after warmup has elapsed the evaluator is eligible
       expect(await registry.isEligible(evaluatorA.address)).to.be.true;
       // The stake happened between `before` and `after`
       expect(after).to.be.greaterThanOrEqual(before);
@@ -123,6 +123,7 @@ describe("EvaluatorRegistry", function () {
       expect(await registry.isEligible(evaluatorA.address)).to.be.false;
 
       await registry.connect(evaluatorA).stake(secondStake);
+      await time.increase(WARMUP_PERIOD + 1); // isEligible now includes warmup filter
       expect(await registry.isEligible(evaluatorA.address)).to.be.true;
       expect(await registry.getEvaluatorCount()).to.equal(1);
     });
@@ -155,6 +156,7 @@ describe("EvaluatorRegistry", function () {
 
       await protocolToken.connect(evaluatorA).approve(await registry.getAddress(), ABOVE_MIN);
       await registry.connect(evaluatorA).stake(ABOVE_MIN);
+      await time.increase(WARMUP_PERIOD + 1); // advance past warmup so isEligible returns true
 
       return base;
     }

@@ -472,6 +472,9 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      */
     function slash(address evaluator, uint256 amount) external onlyJobManager nonReentrant {
         // CHECKS
+        // AUDIT-H6: validate inputs before any state access.
+        if (evaluator == address(0)) revert ZeroAddress("evaluator");
+        if (amount == 0) revert ZeroAmount();
         // FINDING NOUVEAU: check slash pause BEFORE any state reads.
         // If slashPaused == true, the owner has signalled an active emergency (likely a
         // compromised jobManager). We revert immediately rather than burn staker tokens.
@@ -602,7 +605,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      *      has had 2 days to assess gas costs and any operational impact.
      * @param newMinimum Must match the value passed to the corresponding proposeMinEvaluatorStake().
      */
-    function executeMinEvaluatorStake(uint256 newMinimum) external onlyOwner {
+    function executeMinEvaluatorStake(uint256 newMinimum) external onlyOwner nonReentrant {
         bytes32 key = keccak256("minEvaluatorStake");
         PendingChange storage p = pendingChanges[key];
 
@@ -643,9 +646,12 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
     /**
      * @notice Cancels any pending governance proposal identified by its key.
+     * @dev AUDIT-H5: reverts if no proposal exists — prevents spurious ProposalCancelled
+     *      events that could mislead off-chain indexers tracking governance state.
      * @param key keccak256 identifier of the proposal to cancel.
      */
     function cancelProposal(bytes32 key) external onlyOwner {
+        if (pendingChanges[key].executableAt == 0) revert NoProposalPending(key);
         delete pendingChanges[key];
         emit ProposalCancelled(key);
     }
@@ -679,11 +685,16 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
 
     /**
      * @notice Returns whether an evaluator is currently eligible for assignment.
+     * @dev AUDIT-L13: includes the warmup filter so this view matches the actual
+     *      selection logic in assignEvaluator(). Previously returned true for
+     *      evaluators in their warmup window, which was misleading for integrators.
      * @param evaluator The evaluator address to query.
-     * @return True if the evaluator is active (stake >= minEvaluatorStake).
+     * @return True if the evaluator is active AND has passed the warmup period.
      */
     function isEligible(address evaluator) external view returns (bool) {
-        return evaluators[evaluator].active;
+        Evaluator storage eval = evaluators[evaluator];
+        if (!eval.active) return false;
+        return eval.activeSince <= uint64(block.timestamp) - warmupPeriod;
     }
 
     /**
