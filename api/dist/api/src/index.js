@@ -140,6 +140,26 @@ function withTimeout(promise, label) {
         new Promise((_, reject) => setTimeout(() => reject(new Error(`Operation timed out after ${BLOCKCHAIN_TIMEOUT_MS / 1000}s: ${label}`)), BLOCKCHAIN_TIMEOUT_MS)),
     ]);
 }
+// Retries an async function up to maxAttempts times with exponential backoff.
+// Used for background blockchain handlers where a transient RPC error (stale
+// nonce, rate-limit, brief node unavailability) should not permanently fail the job.
+async function withRetry(fn, label, maxAttempts = 3, baseDelayMs = 4_000) {
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn();
+        }
+        catch (err) {
+            lastErr = err;
+            if (attempt < maxAttempts) {
+                const delay = baseDelayMs * attempt;
+                console.warn(`[retry] ${label} attempt ${attempt}/${maxAttempts} failed — retrying in ${delay}ms:`, err instanceof Error ? err.message : err);
+                await new Promise((r) => setTimeout(r, delay));
+            }
+        }
+    }
+    throw lastErr;
+}
 // Polls getJob() until the job record is visible on the RPC node (post-createJob).
 // This replaces the fragile fixed sleep(2000) that was previously used.
 async function waitForJobOnChain(jobManager, jobId, maxAttempts = 12, delayMs = 500) {
@@ -424,9 +444,9 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req, res) => {
         return;
     }
     res.status(202).json({ jobId: id, status: 'processing' });
-    setImmediate(async () => {
+    setImmediate(() => {
         console.log(`[fund] Background handler started for job ${id}`);
-        try {
+        withRetry(async () => {
             const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.primaryProvider);
             const usdc = (0, contracts_1.getMockUSDCWithSigner)(signer);
             const jobManager = (0, contracts_1.getJobManagerWithSigner)(signer);
@@ -434,19 +454,26 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req, res) => {
             const jobManagerAddress = contracts_1.manifest.contracts.AgentJobManager.address;
             const agentAddress = await signer.getAddress();
             console.log(`[fund] Wallet ${agentAddress}, budget ${job.budget} USDC`);
+            // Re-read nonce fresh on every attempt — avoids stale-nonce errors caused by
+            // RPC propagation delay between setBudget (confirmed in createJob handler) and
+            // this background handler starting.
             let nonce = await contracts_1.primaryProvider.getTransactionCount(agentAddress, 'pending');
             console.log(`[fund] Starting nonce: ${nonce}`);
-            // Approve the maximum possible amount so the agent never needs a second approval
-            // when creating more jobs with the same token — saves a transaction in the future.
-            // Note: we do NOT mint here — the client must already hold USDC (use POST /v1/faucet/usdc).
-            console.log(`[fund] Step 1/2 — approving USDC allowance…`);
-            const approveGas = await usdc.approve.estimateGas(jobManagerAddress, ethers_1.ethers.MaxUint256);
-            const approveTx = await usdc.approve(jobManagerAddress, ethers_1.ethers.MaxUint256, {
-                gasLimit: (approveGas * 120n) / 100n, nonce: nonce++,
-            });
-            console.log(`[fund] approve tx sent: ${approveTx.hash}`);
-            await withTimeout(approveTx.wait(1), 'approve confirmation');
-            console.log(`[fund] approve confirmed`);
+            // Skip approve if already approved (idempotent retry support)
+            const existingAllowance = await (0, contracts_1.getMockUSDCReadOnly)().allowance(agentAddress, jobManagerAddress);
+            if (existingAllowance < budgetWei) {
+                console.log(`[fund] Step 1/2 — approving USDC allowance…`);
+                const approveGas = await usdc.approve.estimateGas(jobManagerAddress, ethers_1.ethers.MaxUint256);
+                const approveTx = await usdc.approve(jobManagerAddress, ethers_1.ethers.MaxUint256, {
+                    gasLimit: (approveGas * 120n) / 100n, nonce: nonce++,
+                });
+                console.log(`[fund] approve tx sent: ${approveTx.hash}`);
+                await withTimeout(approveTx.wait(1), 'approve confirmation');
+                console.log(`[fund] approve confirmed`);
+            }
+            else {
+                console.log(`[fund] Step 1/2 — allowance already sufficient (${ethers_1.ethers.formatUnits(existingAllowance, contracts_1.USDC_DECIMALS)} USDC), skipping approve`);
+            }
             // Call fund() — passes expectedBudget so the contract can validate nothing changed
             console.log(`[fund] Step 2/2 — calling fund()…`);
             const onChainJobId = BigInt(id);
@@ -457,15 +484,13 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req, res) => {
             console.log(`[fund] fund tx sent: ${fundTx.hash}`);
             const fundReceipt = await withTimeout(fundTx.wait(1), 'fund confirmation');
             if (!fundReceipt || fundReceipt.status === 0) {
-                console.error(`[fund] Transaction reverted for job ${id}: ${basescanTx(fundTx.hash)}`);
-                return;
+                throw new Error(`fund() reverted — ${basescanTx(fundTx.hash)}`);
             }
             (0, storage_1.updateJobStatus)(id, 'funded', fundTx.hash);
             console.log(`[fund] Job ${id} funded — ${basescanTx(fundTx.hash)}`);
-        }
-        catch (err) {
-            console.error(`[fund] Failed to fund job ${id}:`, err);
-        }
+        }, `fund job ${id}`).catch((err) => {
+            console.error(`[fund] All retries exhausted for job ${id}:`, err);
+        });
     });
 });
 // -------------------------------------------------------------------
@@ -495,38 +520,33 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req, res) => {
         return;
     }
     res.status(202).json({ jobId: id, status: 'processing' });
-    setImmediate(async () => {
+    setImmediate(() => {
         console.log(`[submit] Background handler started for job ${id}`);
-        try {
+        withRetry(async () => {
             const signer = (0, wallet_1.walletFromEncrypted)(agent.encryptedPrivateKey, contracts_1.primaryProvider);
             const jobManager = (0, contracts_1.getJobManagerWithSigner)(signer);
             const providerAddress = await signer.getAddress();
             console.log(`[submit] Provider wallet: ${providerAddress}`);
             // ERC-8183 submit() expects a bytes32 hash of the deliverable, not the raw content.
-            // The actual deliverable should be stored off-chain (IPFS, S3, etc.).
             const deliverableHash = ethers_1.ethers.keccak256(ethers_1.ethers.toUtf8Bytes(deliverable));
             console.log(`[submit] Deliverable hash: ${deliverableHash}`);
             const onChainJobId = BigInt(id);
             const nonce = await contracts_1.primaryProvider.getTransactionCount(providerAddress, 'pending');
             console.log(`[submit] Nonce: ${nonce}`);
-            console.log(`[submit] Estimating gas for submit()…`);
             const gasEstimate = await jobManager.submit.estimateGas(onChainJobId, deliverableHash);
-            console.log(`[submit] Gas estimate: ${gasEstimate}`);
             const submitTx = await jobManager.submit(onChainJobId, deliverableHash, {
                 gasLimit: (gasEstimate * 120n) / 100n, nonce,
             });
             console.log(`[submit] tx sent: ${submitTx.hash}`);
             const submitReceipt = await withTimeout(submitTx.wait(1), 'submit confirmation');
             if (!submitReceipt || submitReceipt.status === 0) {
-                console.error(`[submit] Transaction reverted for job ${id}: ${basescanTx(submitTx.hash)}`);
-                return;
+                throw new Error(`submit() reverted — ${basescanTx(submitTx.hash)}`);
             }
             (0, storage_1.updateJobStatus)(id, 'submitted', submitTx.hash);
             console.log(`[submit] Job ${id} submitted — ${basescanTx(submitTx.hash)}`);
-        }
-        catch (err) {
-            console.error(`[submit] Failed to submit job ${id}:`, err);
-        }
+        }, `submit job ${id}`).catch((err) => {
+            console.error(`[submit] All retries exhausted for job ${id}:`, err);
+        });
     });
 });
 // -------------------------------------------------------------------
@@ -559,37 +579,32 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req, res) => {
         return;
     }
     res.status(202).json({ jobId: id, status: 'processing' });
-    setImmediate(async () => {
+    setImmediate(() => {
         console.log(`[complete] Background handler started for job ${id}`);
-        try {
+        const reasonStr = typeof reason === 'string' ? reason : '';
+        const reasonTruncated = reasonStr.length > 31;
+        const reasonBytes = ethers_1.ethers.encodeBytes32String(reasonStr.slice(0, 31));
+        withRetry(async () => {
             const jobManager = (0, contracts_1.getJobManagerWithSigner)(evaluatorSigner);
             const evaluatorAddress = await evaluatorSigner.getAddress();
             console.log(`[complete] Evaluator wallet: ${evaluatorAddress}`);
-            const reasonStr = typeof reason === 'string' ? reason : '';
-            const reasonTruncated = reasonStr.length > 31;
-            // The reason field is stored as bytes32 on-chain — max 31 ASCII chars
-            const reasonBytes = ethers_1.ethers.encodeBytes32String(reasonStr.slice(0, 31));
             const onChainJobId = BigInt(id);
             const nonce = await contracts_1.primaryProvider.getTransactionCount(evaluatorAddress, 'pending');
             console.log(`[complete] Nonce: ${nonce}`);
-            console.log(`[complete] Estimating gas for complete()…`);
             const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes);
-            console.log(`[complete] Gas estimate: ${gasEstimate}`);
             const completeTx = await jobManager.complete(onChainJobId, reasonBytes, {
                 gasLimit: (gasEstimate * 120n) / 100n, nonce,
             });
             console.log(`[complete] tx sent: ${completeTx.hash}`);
             const completeReceipt = await withTimeout(completeTx.wait(1), 'complete confirmation');
             if (!completeReceipt || completeReceipt.status === 0) {
-                console.error(`[complete] Transaction reverted for job ${id}: ${basescanTx(completeTx.hash)}`);
-                return;
+                throw new Error(`complete() reverted — ${basescanTx(completeTx.hash)}`);
             }
             (0, storage_1.updateJobStatus)(id, 'completed', completeTx.hash);
             console.log(`[complete] Job ${id} completed — ${basescanTx(completeTx.hash)}${reasonTruncated ? ' (reason truncated)' : ''}`);
-        }
-        catch (err) {
-            console.error(`[complete] Failed to complete job ${id}:`, err);
-        }
+        }, `complete job ${id}`).catch((err) => {
+            console.error(`[complete] All retries exhausted for job ${id}:`, err);
+        });
     });
 });
 // -------------------------------------------------------------------
