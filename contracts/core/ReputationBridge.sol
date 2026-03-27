@@ -93,6 +93,16 @@ contract ReputationBridge is Ownable {
     /// @notice Thrown when a required address is zero in an admin function.
     error ZeroAddress(string paramName);
 
+    // ─── Admin events ─────────────────────────────────────────────────────────
+
+    /// @notice Emitted when the jobManager address is updated.
+    /// @dev AUDIT-L: critical address change must be indexable off-chain.
+    event JobManagerUpdated(address indexed oldManager, address indexed newManager);
+
+    /// @notice Emitted when the reputationRegistry address is updated.
+    /// @dev AUDIT-L: critical address change must be indexable off-chain.
+    event ReputationRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+
     // ─── State variables ──────────────────────────────────────────────────────
 
     /// @notice Address of the AgentJobManager contract authorized to call this bridge.
@@ -177,6 +187,7 @@ contract ReputationBridge is Ownable {
      */
     function setJobManager(address _jobManager) external onlyOwner {
         if (_jobManager == address(0)) revert ZeroAddress("jobManager");
+        emit JobManagerUpdated(jobManager, _jobManager);
         jobManager = _jobManager;
     }
 
@@ -188,6 +199,7 @@ contract ReputationBridge is Ownable {
      */
     function setReputationRegistry(address _reputationRegistry) external onlyOwner {
         // address(0) is explicitly allowed here — it disables forwarding silently.
+        emit ReputationRegistryUpdated(reputationRegistry, _reputationRegistry);
         reputationRegistry = _reputationRegistry;
     }
 
@@ -221,7 +233,11 @@ contract ReputationBridge is Ownable {
         bytes32 reason
     ) internal {
         // Use try/catch to gracefully handle registry failures without reverting.
-        try registry.recordOutcome(agent, counterpart, positive, jobId, reason) {
+        // AUDIT-M7: gas cap prevents a malicious or infinite-loop registry from
+        // exhausting all remaining gas and causing an OOG in the parent settlement tx.
+        // 200 000 gas accommodates a registry that stores outcome data (3-5 SSTOREs + event
+        // ≈ 120 000 gas cold) while still hard-blocking infinite loops or recursive attacks.
+        try registry.recordOutcome{gas: 200_000}(agent, counterpart, positive, jobId, reason) {
             emit OutcomeRecorded(jobId, agent, positive);
         } catch (bytes memory revertData) {
             // Registry call failed — emit event for off-chain monitoring and continue.

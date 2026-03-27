@@ -38,8 +38,10 @@ export interface ReputationBridgeInterface extends Interface {
 
   getEvent(
     nameOrSignatureOrTopic:
+      | "JobManagerUpdated"
       | "OutcomeRecorded"
       | "OwnershipTransferred"
+      | "ReputationRegistryUpdated"
       | "ReputationUpdateFailed"
   ): EventFragment;
 
@@ -101,6 +103,19 @@ export interface ReputationBridgeInterface extends Interface {
   ): Result;
 }
 
+export namespace JobManagerUpdatedEvent {
+  export type InputTuple = [oldManager: AddressLike, newManager: AddressLike];
+  export type OutputTuple = [oldManager: string, newManager: string];
+  export interface OutputObject {
+    oldManager: string;
+    newManager: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace OutcomeRecordedEvent {
   export type InputTuple = [
     jobId: BigNumberish,
@@ -125,6 +140,19 @@ export namespace OwnershipTransferredEvent {
   export interface OutputObject {
     previousOwner: string;
     newOwner: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace ReputationRegistryUpdatedEvent {
+  export type InputTuple = [oldRegistry: AddressLike, newRegistry: AddressLike];
+  export type OutputTuple = [oldRegistry: string, newRegistry: string];
+  export interface OutputObject {
+    oldRegistry: string;
+    newRegistry: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -275,6 +303,13 @@ export interface ReputationBridge extends BaseContract {
   ): TypedContractMethod<[newOwner: AddressLike], [void], "nonpayable">;
 
   getEvent(
+    key: "JobManagerUpdated"
+  ): TypedContractEvent<
+    JobManagerUpdatedEvent.InputTuple,
+    JobManagerUpdatedEvent.OutputTuple,
+    JobManagerUpdatedEvent.OutputObject
+  >;
+  getEvent(
     key: "OutcomeRecorded"
   ): TypedContractEvent<
     OutcomeRecordedEvent.InputTuple,
@@ -289,6 +324,13 @@ export interface ReputationBridge extends BaseContract {
     OwnershipTransferredEvent.OutputObject
   >;
   getEvent(
+    key: "ReputationRegistryUpdated"
+  ): TypedContractEvent<
+    ReputationRegistryUpdatedEvent.InputTuple,
+    ReputationRegistryUpdatedEvent.OutputTuple,
+    ReputationRegistryUpdatedEvent.OutputObject
+  >;
+  getEvent(
     key: "ReputationUpdateFailed"
   ): TypedContractEvent<
     ReputationUpdateFailedEvent.InputTuple,
@@ -297,6 +339,17 @@ export interface ReputationBridge extends BaseContract {
   >;
 
   filters: {
+    "JobManagerUpdated(address,address)": TypedContractEvent<
+      JobManagerUpdatedEvent.InputTuple,
+      JobManagerUpdatedEvent.OutputTuple,
+      JobManagerUpdatedEvent.OutputObject
+    >;
+    JobManagerUpdated: TypedContractEvent<
+      JobManagerUpdatedEvent.InputTuple,
+      JobManagerUpdatedEvent.OutputTuple,
+      JobManagerUpdatedEvent.OutputObject
+    >;
+
     "OutcomeRecorded(uint256,address,bool)": TypedContractEvent<
       OutcomeRecordedEvent.InputTuple,
       OutcomeRecordedEvent.OutputTuple,
@@ -317,6 +370,17 @@ export interface ReputationBridge extends BaseContract {
       OwnershipTransferredEvent.InputTuple,
       OwnershipTransferredEvent.OutputTuple,
       OwnershipTransferredEvent.OutputObject
+    >;
+
+    "ReputationRegistryUpdated(address,address)": TypedContractEvent<
+      ReputationRegistryUpdatedEvent.InputTuple,
+      ReputationRegistryUpdatedEvent.OutputTuple,
+      ReputationRegistryUpdatedEvent.OutputObject
+    >;
+    ReputationRegistryUpdated: TypedContractEvent<
+      ReputationRegistryUpdatedEvent.InputTuple,
+      ReputationRegistryUpdatedEvent.OutputTuple,
+      ReputationRegistryUpdatedEvent.OutputObject
     >;
 
     "ReputationUpdateFailed(uint256,address,bytes)": TypedContractEvent<

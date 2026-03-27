@@ -632,8 +632,10 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             // malicious or misconfigured bridge from exhausting the evaluator's entire
             // gas budget via an infinite loop. The try/catch already prevents reverts
             // from blocking settlement; the gas cap closes the griefing vector.
-            // 50 000 gas is sufficient for a well-implemented bridge (two SSTOREs + event ≈ 30 000).
-            try IReputationBridge(bridge).recordJobOutcome{gas: 50_000}(jobId, provider, evaluator, true, reason) {}
+            // 100 000 gas is conservative for Base L2 where SSTORE costs differ from Ethereum
+            // mainnet, and the bridge may perform 3 SSTOREs + event + a nested ERC-8004 call.
+            // AUDIT-M1: previous cap of 50 000 was too low and caused silent OOG failures.
+            try IReputationBridge(bridge).recordJobOutcome{gas: 100_000}(jobId, provider, evaluator, true, reason) {}
             catch {}
         }
     }
@@ -672,7 +674,9 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             // a post-deadline rejection would let an Evaluator inflict a negative
             // reputation signal on a Provider who was never actually evaluated within
             // the agreed time window — an unjust outcome and a potential griefing vector.
-            if (block.timestamp > job.deadline) revert DeadlineAlreadyPassed(jobId);
+            // AUDIT-H3: use >= (not >) to close the race window at the exact deadline block
+            // where both reject() and claimExpired() were simultaneously valid.
+            if (block.timestamp >= job.deadline) revert DeadlineAlreadyPassed(jobId);
         } else {
             // Any other state (Completed, Rejected, Expired) is an invalid transition.
             revert InvalidJobStatus(jobId, current);
@@ -710,8 +714,8 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // can never block settlement. Funds are always safe regardless of bridge state.
         address bridge = reputationBridge;
         if (bridge != address(0) && evaluatorInvolved) {
-            // FINDING-001 fix: same 50 000 gas cap as in complete().
-            try IReputationBridge(bridge).recordJobOutcome{gas: 50_000}(
+            // AUDIT-M1: increased to 100 000 — same reasoning as in complete().
+            try IReputationBridge(bridge).recordJobOutcome{gas: 100_000}(
                 jobId,
                 job.provider,   // read from storage — job ref is still valid
                 job.evaluator,  // read from storage — job ref is still valid
@@ -923,6 +927,18 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // The Client cannot be their own Provider — same invariant as createJob.
         if (newProvider == job.client) revert SelfAssignment("newProvider");
 
+        // AUDIT-H2: the previous evaluator who rejected this job cannot become the new
+        // provider. An evaluator who rejected has already demonstrated adversarial
+        // alignment with this job and should not be able to switch roles to exploit it.
+        if (job.evaluator != address(0) && newProvider == job.evaluator) {
+            revert SelfAssignment("newProvider");
+        }
+
+        // AUDIT-M2: the job token must still be whitelisted. It could have been removed
+        // via disallowToken() between job creation/rejection and this reopen call.
+        // Without this check a disallowed fee-on-transfer token could re-enter via reopen.
+        if (!allowedTokens[job.token]) revert TokenNotAllowed(job.token);
+
         // New deadline must be sufficiently in the future.
         if (newDeadline < uint64(block.timestamp) + MIN_DEADLINE_OFFSET) {
             revert DeadlineTooSoon(newDeadline, uint64(block.timestamp) + MIN_DEADLINE_OFFSET);
@@ -1047,11 +1063,13 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      * @dev Useful when the owner wants to abandon a proposal before it executes
      *      (e.g., after discovering an error in the proposed value).
      *      The key is keccak256("<parameterName>"), e.g. keccak256("feeRate").
-     *      Cancelling a non-existent proposal is a no-op (no revert) to simplify
-     *      tooling — checking existence before cancellation is not required.
+     *      AUDIT-H5: reverts if no proposal exists for the key — prevents spurious
+     *      ProposalCancelled events that would mislead off-chain indexers into
+     *      believing a proposal was cancelled when none was pending.
      * @param key keccak256 identifier of the proposal to cancel.
      */
     function cancelProposal(bytes32 key) external onlyOwner {
+        if (pendingChanges[key].executableAt == 0) revert NoProposalPending(key);
         delete pendingChanges[key];
         emit ProposalCancelled(key);
     }
