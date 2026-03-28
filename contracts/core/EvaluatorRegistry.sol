@@ -652,7 +652,10 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
             }
         }
 
-        emit MinEvaluatorStakeUpdated(oldMinimum, newMinimum);
+        // AUDIT-E4: emit only MinStakeExecuted (the more informative event — it signals
+        // that the governance timelock was respected). MinEvaluatorStakeUpdated was a
+        // legacy event from the pre-timelock setter; emitting both caused double-counting
+        // in indexers tracking the governance state.
         emit MinStakeExecuted(oldMinimum, newMinimum);
     }
 

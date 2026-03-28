@@ -509,6 +509,14 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         if (job.budget == 0) revert BudgetNotSet(jobId);
         if (expectedBudget != job.budget) revert BudgetMismatch(job.budget, expectedBudget);
 
+        // AUDIT-NEW-04: re-verify the explicit evaluator is still eligible at fund() time.
+        // An evaluator validated at createJob() may have unstaked between createJob() and fund(),
+        // losing their skin-in-the-game and becoming non-slashable. Without this check, the job
+        // would be funded against an evaluator who carries no cryptoeconomic guarantee.
+        if (job.evaluator != address(0) && !evaluatorRegistry.isEligible(job.evaluator)) {
+            revert EvaluatorNotEligible(job.evaluator);
+        }
+
         // EFFECTS — resolve evaluator before state change
         // If no explicit evaluator was set, assign one from the registry now.
         // This must happen before status change so that the job has a valid evaluator
@@ -523,7 +531,14 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         job.status = JobStatus.Funded;
 
         // INTERACTIONS — transfer tokens into escrow after all state is finalized
+        // AUDIT-NEW-12: measure balance before/after to detect fee-on-transfer tokens that
+        // were whitelisted before their fee was activated (e.g. proxy upgrades on USDT).
+        // We do NOT support fee-on-transfer tokens — this check makes the exclusion explicit
+        // and prevents a future proxy upgrade from silently breaking the payment invariant.
+        uint256 balanceBefore = IERC20(job.token).balanceOf(address(this));
         IERC20(job.token).safeTransferFrom(msg.sender, address(this), job.budget);
+        uint256 received = IERC20(job.token).balanceOf(address(this)) - balanceBefore;
+        if (received != job.budget) revert BudgetMismatch(job.budget, uint128(received));
 
         emit JobFunded(jobId, job.budget);
     }
@@ -643,10 +658,13 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             // malicious or misconfigured bridge from exhausting the evaluator's entire
             // gas budget via an infinite loop. The try/catch already prevents reverts
             // from blocking settlement; the gas cap closes the griefing vector.
-            // 100 000 gas is conservative for Base L2 where SSTORE costs differ from Ethereum
-            // mainnet, and the bridge may perform 3 SSTOREs + event + a nested ERC-8004 call.
+            // AUDIT-B1: the gas cap must cover the full call chain:
+            //   AgentJobManager → ReputationBridge (~100k) → ERC-8004 registry (~200k)
+            // With only 100k forwarded, ReputationBridge could not itself forward 200k to the
+            // registry (EVM EIP-150: the callee only receives what the caller has minus overhead).
+            // 350k = 200k (registry) + ~100k (bridge execution) + EIP-150 margin.
             // AUDIT-M1: previous cap of 50 000 was too low and caused silent OOG failures.
-            try IReputationBridge(bridge).recordJobOutcome{gas: 100_000}(jobId, provider, evaluator, true, reason) {}
+            try IReputationBridge(bridge).recordJobOutcome{gas: 350_000}(jobId, provider, evaluator, true, reason) {}
             catch {}
         }
     }
@@ -725,8 +743,8 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // can never block settlement. Funds are always safe regardless of bridge state.
         address bridge = reputationBridge;
         if (bridge != address(0) && evaluatorInvolved) {
-            // AUDIT-M1: increased to 100 000 — same reasoning as in complete().
-            try IReputationBridge(bridge).recordJobOutcome{gas: 100_000}(
+            // AUDIT-B1: same 350k cap as in complete() — see complete() for full reasoning.
+            try IReputationBridge(bridge).recordJobOutcome{gas: 350_000}(
                 jobId,
                 job.provider,   // read from storage — job ref is still valid
                 job.evaluator,  // read from storage — job ref is still valid
@@ -935,8 +953,10 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // newProvider must be a real address.
         if (newProvider == address(0)) revert ZeroAddress("newProvider");
 
-        // The Client cannot be their own Provider — same invariant as createJob.
-        if (newProvider == job.client) revert SelfAssignment("newProvider");
+        // The Client cannot be their own Provider unless selfServiceEnabled — same invariant as createJob.
+        // AUDIT-NEW-06: align reopen() with createJob() so that selfServiceEnabled=true workflows
+        // are not blocked at reopen() time while being allowed at createJob() time.
+        if (!selfServiceEnabled && newProvider == job.client) revert SelfAssignment("newProvider");
 
         // AUDIT-H2: the previous evaluator who rejected this job cannot become the new
         // provider. An evaluator who rejected has already demonstrated adversarial
@@ -1125,6 +1145,10 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      * @param token ERC-20 token address to remove from the whitelist.
      */
     function disallowToken(address token) external onlyOwner {
+        // AUDIT-E3: mirror the address(0) check from allowToken() for consistency.
+        // Calling disallowToken(address(0)) would emit a spurious event and confuse indexers
+        // tracking the whitelist (a token that was never allowed appearing as disallowed).
+        if (token == address(0)) revert ZeroAddress("token");
         allowedTokens[token] = false;
         emit TokenDisallowed(token);
     }

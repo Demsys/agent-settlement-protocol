@@ -578,7 +578,7 @@ describe("EvaluatorRegistry", function () {
       await time.increase(GOVERNANCE_DELAY_SEC + 1);
 
       await expect(registry.connect(deployer).executeMinEvaluatorStake(newMinimum))
-        .to.emit(registry, "MinEvaluatorStakeUpdated")
+        .to.emit(registry, "MinStakeExecuted")
         .withArgs(MIN_STAKE, newMinimum);
 
       expect(await registry.isEligible(evaluatorA.address)).to.be.false;
