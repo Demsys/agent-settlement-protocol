@@ -64,12 +64,11 @@ contract ProtocolToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessC
     /**
      * @notice Deploys the ProtocolToken and mints the full initial supply to the deployer.
      * @dev The deployer receives:
-     *      - Ownable ownership (can grant/revoke roles via AccessControl)
-     *      - DEFAULT_ADMIN_ROLE (can manage all roles)
+     *      - DEFAULT_ADMIN_ROLE (can manage all roles via AccessControl)
      *      - MINTER_ROLE (can mint additional supply)
      *      - The full INITIAL_SUPPLY of tokens
      *
-     *      Ownable is initialized with msg.sender as the initial owner.
+     *      AUDIT-M8: Ownable was removed — admin identity is exclusively via AccessControl.
      *      AccessControl roles are granted explicitly after super constructors.
      */
     constructor()
