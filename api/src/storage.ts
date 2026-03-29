@@ -138,7 +138,7 @@ const stmts = {
   selectAgentByApiKey: db.prepare('SELECT * FROM agents WHERE apiKey = ?'),
 
   insertJob: db.prepare(`
-    INSERT INTO jobs (jobId, agentId, txHash, status, providerAddress, budget, deadlineMinutes, createdAt, updatedAt)
+    INSERT OR REPLACE INTO jobs (jobId, agentId, txHash, status, providerAddress, budget, deadlineMinutes, createdAt, updatedAt)
     VALUES (@jobId, @agentId, @txHash, @status, @providerAddress, @budget, @deadlineMinutes, @createdAt, @updatedAt)
   `),
   selectAllJobs: db.prepare('SELECT * FROM jobs'),
