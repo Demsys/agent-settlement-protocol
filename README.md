@@ -92,15 +92,15 @@ The evaluator is selected automatically from `EvaluatorRegistry` at job creation
 
 ## Deployed Contracts (Base Sepolia)
 
-Deployed on 2026-03-26. Chain ID: 84532.
+Deployed on 2026-03-29. Chain ID: 84532.
 
 | Contract | Address | Explorer |
 |---|---|---|
-| AgentJobManager | `0xa10Db59e92aDd50687A8D36f3978abEBc04f6C5B` | [basescan](https://sepolia.basescan.org/address/0xa10Db59e92aDd50687A8D36f3978abEBc04f6C5B#readContract) |
-| EvaluatorRegistry | `0xC9E1e5038B030253263387089692ff9A2547477a` | [basescan](https://sepolia.basescan.org/address/0xC9E1e5038B030253263387089692ff9A2547477a#readContract) |
-| ReputationBridge | `0x00aEBdB60f7f40B70423Bbcff41B50C395F55e45` | [basescan](https://sepolia.basescan.org/address/0x00aEBdB60f7f40B70423Bbcff41B50C395F55e45#readContract) |
-| ProtocolToken | `0xe239317dBbb1D73C3BC2513b563951f38EeA3566` | [basescan](https://sepolia.basescan.org/address/0xe239317dBbb1D73C3BC2513b563951f38EeA3566#readContract) |
-| MockUSDC | `0xA19894e0ae6CEA29D3a5fAA6434F15E046053a4D` | [basescan](https://sepolia.basescan.org/address/0xA19894e0ae6CEA29D3a5fAA6434F15E046053a4D#readContract) |
+| AgentJobManager | `0xef8b87A6236e7DB4E0967Ed068C8893fD5a5D57f` | [basescan](https://sepolia.basescan.org/address/0xef8b87A6236e7DB4E0967Ed068C8893fD5a5D57f#readContract) |
+| EvaluatorRegistry | `0xE3E7bE158E79f2570e28E566d81e447878b1cF99` | [basescan](https://sepolia.basescan.org/address/0xE3E7bE158E79f2570e28E566d81e447878b1cF99#readContract) |
+| ReputationBridge | `0x5981ac8A970c8757f768B7E02feA7Bd0fCD912e3` | [basescan](https://sepolia.basescan.org/address/0x5981ac8A970c8757f768B7E02feA7Bd0fCD912e3#readContract) |
+| ProtocolToken | `0xa9dD39B2F4c5C76121d8820De8B2eBF4279B76Fc` | [basescan](https://sepolia.basescan.org/address/0xa9dD39B2F4c5C76121d8820De8B2eBF4279B76Fc#readContract) |
+| MockUSDC | `0x21365250F72066AcEBD7D4aE27b6d3910b331c6E` | [basescan](https://sepolia.basescan.org/address/0x21365250F72066AcEBD7D4aE27b6d3910b331c6E#readContract) |
 
 Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 100 ASP tokens.
 
