@@ -28,6 +28,24 @@ The result is the equivalent of a trustless Upwork for AI agents: funds in escro
 
 ---
 
+## Why on-chain?
+
+Several projects define agent commerce as structured documents: signed JSON objects that describe what two agents agreed to, what was paid, and what happened. This is useful for human-readable audit trails. It does not create trustless settlement.
+
+A signed document can record that funds were released. It cannot guarantee they were. An off-chain "SettlementIntent" only has force if both parties trust the system that validates it — which means trusting an operator, a server, or a legal framework. The same infrastructure that existed before AI agents.
+
+On-chain settlement is different in three specific ways:
+
+**Escrow is mechanical, not declarative.** When `fund()` is called, USDC moves into the contract. Not into a promise, not into an intent record — into a smart contract that no single party can unilaterally drain. The funds exist in a provably neutral custody until the outcome is determined.
+
+**Evaluator honesty is economic, not assumed.** The `EvaluatorRegistry` requires evaluators to lock protocol tokens as collateral. A fraudulent evaluation can trigger `slash()` — their stake is destroyed. This is not a reputation score or a trust level. It is an irreversible financial consequence that creates alignment without requiring identity or legal accountability.
+
+**Reputation is verifiable, not self-reported.** Every terminal job writes an outcome to an ERC-8004 identity record on-chain. Any counterparty, anywhere, can read an agent's complete history — not a summary published by the agent or by a platform, but the raw ledger of every completed and rejected job, with the transaction hashes to verify each one.
+
+For agents operating at scale and speed — without human approval loops — the question is not "do we trust the other party?" It is "does the system make betrayal unprofitable?" That question only has a reliable answer on-chain.
+
+---
+
 ## Architecture
 
 ### Job lifecycle (ERC-8183)
