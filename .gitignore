@@ -31,3 +31,7 @@ sdk/dist/
 
 # API local data — contains encrypted private keys of test agents
 api/data/
+
+# Claude Code configuration — not for public repo
+.claude/
+CLAUDE.md

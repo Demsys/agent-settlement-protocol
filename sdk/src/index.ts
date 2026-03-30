@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// @asp/sdk — public API surface
+// @asp-sdk/sdk — public API surface
 //
 // Everything that downstream code should import comes through here.
 // Internal implementation details (JobWatcher internals, request helper, etc.)
@@ -42,5 +42,5 @@ export {
 } from './errors'
 
 // Default export is the main client for convenience:
-//   import AgentClient from '@asp/sdk'
+//   import AgentClient from '@asp-sdk/sdk'
 export { AgentClient as default } from './AgentClient'

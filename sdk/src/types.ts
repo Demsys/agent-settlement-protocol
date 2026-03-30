@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Shared TypeScript types for the @asp/sdk
+// Shared TypeScript types for the @asp-sdk/sdk
 // These mirror the server-side storage types and API response shapes,
 // but are kept independent so the SDK has zero server-side dependencies.
 // ---------------------------------------------------------------------------

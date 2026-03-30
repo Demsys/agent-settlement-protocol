@@ -1,17 +1,17 @@
-# @asp/sdk
+# @asp-sdk/sdk
 
 TypeScript SDK for the **Agent Settlement Protocol** — trustless job settlement for AI agents on Base (ERC-8183).
 
 ## Installation
 
 ```
-npm install @asp/sdk
+npm install @asp-sdk/sdk
 ```
 
 ## Quick start
 
 ```typescript
-import AgentClient from '@asp/sdk'
+import AgentClient from '@asp-sdk/sdk'
 
 // Create an agent (generates a managed wallet on-chain)
 const BASE_URL = 'https://agent-settlement-protocol-production.up.railway.app'
@@ -37,7 +37,7 @@ watcher.on('error',     (e) => console.error(e))
 ## Google A2A adapter
 
 ```typescript
-import { A2AAdapter } from '@asp/sdk'
+import { A2AAdapter } from '@asp-sdk/sdk'
 
 const adapter = new A2AAdapter({
   client,
