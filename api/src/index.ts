@@ -337,8 +337,8 @@ app.post('/v1/agents', agentCreationLimiter, async (req: Request, res: Response)
     return
   }
 
-  const wallet = generateWallet()
   const agentId = generateAgentId()
+  const wallet = generateWallet(agentId)   // HKDF key derived from agentId
   const apiKey = generateApiKey()
 
   saveAgent({
@@ -401,7 +401,7 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
 
   try {
     // Wallet signers require a JsonRpcProvider — use primaryProvider here
-    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
+    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider, agent!.agentId)
     const jobManager = getJobManagerWithSigner(signer)
 
     // Track nonce manually to avoid stale-nonce errors on L2 RPC nodes
@@ -518,7 +518,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
   // Fail fast: check the agent wallet has enough USDC before going async.
   // Avoids the confusing "job stays open forever" symptom when USDC is missing.
   try {
-    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
+    const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider, agent!.agentId)
     const agentAddress = await signer.getAddress()
     const budgetWei = ethers.parseUnits(job.budget, USDC_DECIMALS)
     const usdcBalance = await getMockUSDCReadOnly().balanceOf(agentAddress)
@@ -542,7 +542,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
     // SECURITY-006: serialise per-wallet to prevent nonce collisions on concurrent calls
     withWalletQueue(agent!.address, () =>
     withRetry(async () => {
-      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
+      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider, agent!.agentId)
       const usdc = getMockUSDCWithSigner(signer)
       const jobManager = getJobManagerWithSigner(signer)
 
@@ -629,7 +629,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
   setImmediate(() => {
     console.log(`[submit] Background handler started for job ${id}`)
     withRetry(async () => {
-      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
+      const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider, agent!.agentId)
       const jobManager = getJobManagerWithSigner(signer)
       const providerAddress = await signer.getAddress()
       console.log(`[submit] Provider wallet: ${providerAddress}`)

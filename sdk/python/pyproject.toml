@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "asp-sdk"
+version = "0.1.0"
+description = "Python SDK for the Agent Settlement Protocol — ERC-8183 on Base"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.0",
+]
+keywords = ["erc-8183", "ai-agents", "agentic-commerce", "a2a", "settlement", "base", "blockchain"]
+
+[project.optional-dependencies]
+crewai    = ["crewai>=0.28"]
+langgraph = ["langchain-core>=0.2", "langgraph>=0.1"]
+all       = ["crewai>=0.28", "langchain-core>=0.2", "langgraph>=0.1"]
+
+[project.urls]
+Homepage   = "https://github.com/Demsys/agent-settlement-protocol"
+Repository = "https://github.com/Demsys/agent-settlement-protocol"
+Issues     = "https://github.com/Demsys/agent-settlement-protocol/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["asp_sdk*"]
