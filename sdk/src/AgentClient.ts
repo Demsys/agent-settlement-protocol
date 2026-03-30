@@ -305,9 +305,9 @@ export class AgentClient {
 
   /**
    * Fetch the current state of a single job by ID.
-   * Used internally by JobWatcher. The endpoint is public (no API key needed).
+   * Used internally by JobWatcher.
    */
   private async getJobById(jobId: string): Promise<JobRecord> {
-    return this.req<JobRecord>(`${this.baseUrl}/v1/jobs/${jobId}`)
+    return this.req<JobRecord>(`${this.baseUrl}/v1/jobs/${jobId}`, { apiKey: this.apiKey })
   }
 }
