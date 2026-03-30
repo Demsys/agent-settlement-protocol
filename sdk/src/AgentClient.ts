@@ -101,7 +101,7 @@ async function request<T>(
 // ---------------------------------------------------------------------------
 
 /**
- * Main entry point for the @asp/sdk.
+ * Main entry point for the @asp-sdk/sdk.
  *
  * Every instance is bound to a single agent's API key.
  * Use the static factory `AgentClient.createAgent()` to provision a new agent

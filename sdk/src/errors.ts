@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Typed error classes for the @asp/sdk
+// Typed error classes for the @asp-sdk/sdk
 //
 // All SDK errors extend AspError so callers can do a single catch and narrow
 // down with instanceof. The `code` field is machine-readable and stable
@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Base class for all errors thrown by the @asp/sdk.
+ * Base class for all errors thrown by the @asp-sdk/sdk.
  * Never thrown directly — always use a concrete subclass.
  */
 export class AspError extends Error {
