@@ -80,6 +80,11 @@ const BASESCAN_BASE = NETWORK === 'mainnet'
 
 const app = express()
 
+// SECURITY-007: trust the first proxy hop (Railway reverse proxy) so that
+// express-rate-limit reads the real client IP from X-Forwarded-For instead
+// of the proxy's IP. Without this, all traffic shares one rate-limit bucket.
+app.set('trust proxy', 1)
+
 // Body limit — protects against oversized malicious payloads that could
 // exhaust memory before the JSON parser even finishes.
 app.use(bodyParser.json({ limit: '10kb' }))
@@ -238,6 +243,11 @@ app.post('/v1/faucet/usdc', async (req: Request, res: Response) => {
     apiError(res, 400, 'INVALID_AMOUNT', 'amount must be a decimal string (e.g. "100")')
     return
   }
+  // SECURITY-008: cap faucet amount to prevent deployer drain
+  if (parseFloat(amountStr) > 1_000) {
+    apiError(res, 400, 'INVALID_AMOUNT', 'faucet amount cannot exceed 1000 USDC')
+    return
+  }
 
   if (!getDeployerWallet()) {
     apiError(res, 503, 'NO_DEPLOYER', 'Deployer key not configured')
@@ -287,6 +297,17 @@ function getDeployerWallet(): ethers.Wallet | null {
 
 // Serial seed queue — prevents concurrent seed calls from colliding on nonce.
 let _seedQueue: Promise<void> = Promise.resolve()
+
+// SECURITY-006: per-wallet transaction queues — serialises concurrent fund/submit/complete
+// calls from the same agent wallet to prevent nonce collisions on L2 RPC nodes.
+const _walletQueues = new Map<string, Promise<void>>()
+function withWalletQueue<T>(address: string, fn: () => Promise<T>): Promise<T> {
+  const prev = _walletQueues.get(address) ?? Promise.resolve()
+  let resolve!: () => void
+  const slot = new Promise<void>((r) => { resolve = r })
+  _walletQueues.set(address, prev.then(() => slot))
+  return prev.then(fn).finally(resolve)
+}
 
 async function seedAgentWallet(agentAddress: string): Promise<void> {
   _seedQueue = _seedQueue.then(async () => {
@@ -364,6 +385,12 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
   }
   if (!budget || typeof budget !== 'string' || !/^\d+(\.\d+)?$/.test(budget)) {
     apiError(res, 400, 'INVALID_BUDGET', 'budget must be a decimal string (e.g. "5.00")')
+    return
+  }
+  // SECURITY-003: bound budget to prevent griefing / drain attacks
+  const budgetFloat = parseFloat(budget)
+  if (budgetFloat < 0.01 || budgetFloat > 10_000) {
+    apiError(res, 400, 'INVALID_BUDGET', 'budget must be between 0.01 and 10000 USDC')
     return
   }
   const deadlineMins = Number(deadlineMinutes)
@@ -512,6 +539,8 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
 
   setImmediate(() => {
     console.log(`[fund] Background handler started for job ${id}`)
+    // SECURITY-006: serialise per-wallet to prevent nonce collisions on concurrent calls
+    withWalletQueue(agent!.address, () =>
     withRetry(async () => {
       const signer = walletFromEncrypted(agent!.encryptedPrivateKey, primaryProvider)
       const usdc = getMockUSDCWithSigner(signer)
@@ -561,7 +590,7 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
       console.log(`[fund] Job ${id} funded — ${basescanTx(fundTx.hash)}`)
     }, `fund job ${id}`).catch((err) => {
       console.error(`[fund] All retries exhausted for job ${id}:`, err)
-    })
+    }))
   })
 })
 
@@ -704,9 +733,15 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
 // -------------------------------------------------------------------
 
 app.get('/v1/jobs/:id', requireApiKey, async (req: Request<{ id: string }>, res: Response) => {
+  const agent = res.locals.agent as ReturnType<typeof findAgentByApiKey> & {}
   const job = findJobById(req.params.id)
   if (!job) {
     apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`)
+    return
+  }
+  // SECURITY-002: ownership check — a job can only be read by its creator
+  if (job.agentId !== agent!.agentId) {
+    apiError(res, 403, 'FORBIDDEN', 'This job does not belong to your agent')
     return
   }
 

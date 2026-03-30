@@ -249,8 +249,13 @@ export function getDashboardHtml(apiBase: string, basescanBase: string): string 
     mockUsdc:          'MockUSDC',
   }
 
+  // SECURITY-010: escape HTML entities before injecting into innerHTML
+  function esc(v) {
+    return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  }
+
   function shortAddr(addr) {
-    return addr.slice(0, 6) + '…' + addr.slice(-4)
+    return esc(addr).slice(0, 6) + '…' + esc(addr).slice(-4)
   }
 
   function setText(id, val) {
@@ -294,10 +299,10 @@ export function getDashboardHtml(apiBase: string, basescanBase: string): string 
     const tbl = document.getElementById('contracts-table')
     tbl.innerHTML = Object.entries(p.contracts).map(([key, addr]) =>
       \`<tr>
-        <td class="contract-name">\${SHORT_NAMES[key] ?? key}</td>
+        <td class="contract-name">\${esc(SHORT_NAMES[key] ?? key)}</td>
         <td class="contract-addr">\${shortAddr(addr)}</td>
         <td style="text-align:right">
-          <a class="contract-link" href="\${BASESCAN}/\${addr}#readContract" target="_blank">Basescan ↗</a>
+          <a class="contract-link" href="\${BASESCAN}/\${esc(addr)}#readContract" target="_blank">Basescan ↗</a>
         </td>
       </tr>\`
     ).join('')
@@ -311,7 +316,7 @@ export function getDashboardHtml(apiBase: string, basescanBase: string): string 
       ['Évaluateurs',  p.evaluatorCount + ' actif(s)'],
       ['Jobs total',   j.total + ' (API)'],
     ].map(([k,v]) =>
-      \`<div class="config-row"><span class="config-key">\${k}</span><span class="config-value">\${v}</span></div>\`
+      \`<div class="config-row"><span class="config-key">\${esc(k)}</span><span class="config-value">\${esc(v)}</span></div>\`
     ).join('')
   }
 
