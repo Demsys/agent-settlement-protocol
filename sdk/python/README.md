@@ -98,6 +98,103 @@ result = agent.invoke({
 })
 ```
 
+## AutoGen integration
+
+```bash
+pip install asp-sdk[autogen]
+```
+
+### AutoGen v0.4+ (`autogen_agentchat`)
+
+`make_autogen_tools` returns a list of `FunctionTool` objects that
+`AssistantAgent` can use directly. The JSON schema for each tool is derived
+automatically from the function's type annotations and docstring.
+
+```python
+import asyncio
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.ui import Console
+from autogen_agentchat.conditions import TextMentionTermination
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+from asp_sdk import ASPClient
+from asp_sdk.autogen_tool import make_autogen_tools
+
+client, _, _ = ASPClient.create_agent("orchestrator")
+tools = make_autogen_tools(client)  # returns list[FunctionTool]
+
+model_client = OpenAIChatCompletionClient(model="gpt-4o")
+
+agent = AssistantAgent(
+    name="asp_agent",
+    model_client=model_client,
+    tools=tools,
+    system_message=(
+        "You are an orchestrator. Use the ASP tools to delegate tasks to "
+        "provider agents and wait for on-chain settlement."
+    ),
+)
+
+termination = TextMentionTermination("TERMINATE")
+team = RoundRobinGroupChat([agent], termination_condition=termination)
+
+asyncio.run(
+    Console(
+        team.run_stream(
+            task=(
+                "Create a 5 USDC job for provider 0xPROVIDER_ADDRESS, "
+                "submit 'Analyse Q1 sales and return a 3-bullet summary', "
+                "then wait for settlement. Reply TERMINATE when done."
+            )
+        )
+    )
+)
+```
+
+### AutoGen v0.2 (legacy `autogen` package)
+
+For the legacy `autogen` package (pip install autogen), use the
+`register_autogen_v02_tools` convenience helper or register the plain
+callables manually via `register_function`.
+
+```python
+from autogen import AssistantAgent, UserProxyAgent
+from asp_sdk import ASPClient
+from asp_sdk.autogen_tool import make_autogen_tools, register_autogen_v02_tools
+
+client, _, _ = ASPClient.create_agent("orchestrator")
+
+llm_config = {"config_list": [{"model": "gpt-4o", "api_key": "..."}]}
+
+assistant = AssistantAgent(name="asp_assistant", llm_config=llm_config)
+user_proxy = UserProxyAgent(
+    name="user_proxy",
+    human_input_mode="NEVER",
+    code_execution_config=False,
+)
+
+# One-liner: registers all three ASP tools on user_proxy
+register_autogen_v02_tools(executor_agent=user_proxy, client=client)
+
+user_proxy.initiate_chat(
+    assistant,
+    message=(
+        "Create a 5 USDC job for provider 0xPROVIDER_ADDRESS, "
+        "submit 'Analyse Q1 sales and return a 3-bullet summary', "
+        "then wait for settlement."
+    ),
+)
+```
+
+> **Note on tool registration in v0.2:** AutoGen v0.2 uses
+> `register_function()` on the executor agent to map tool names to callables.
+> `make_autogen_tools` returns plain Python callables when `autogen_core` is
+> not installed, so you can also register them individually:
+> ```python
+> tools = make_autogen_tools(client)
+> user_proxy.register_function(function_map={fn.__name__: fn for fn in tools})
+> ```
+
 ## API reference
 
 ### `ASPClient`
