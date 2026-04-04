@@ -22,6 +22,7 @@ export interface JobRecord {
   txHash: string
   status: 'open' | 'funded' | 'submitted' | 'completed' | 'rejected' | 'expired'
   providerAddress: string
+  evaluatorAddress: string // on-chain assigned evaluator (from JobCreated event)
   budget: string         // human-readable (e.g. "5.00")
   deadlineMinutes: number
   createdAt: string
@@ -53,19 +54,28 @@ db.exec(`
     createdAt          TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS jobs (
-    jobId           TEXT PRIMARY KEY,
-    agentId         TEXT NOT NULL,
-    txHash          TEXT NOT NULL,
-    status          TEXT NOT NULL,
-    providerAddress TEXT NOT NULL,
-    budget          TEXT NOT NULL,
-    deadlineMinutes INTEGER NOT NULL,
-    createdAt       TEXT NOT NULL,
-    updatedAt       TEXT NOT NULL
+    jobId              TEXT PRIMARY KEY,
+    agentId            TEXT NOT NULL,
+    txHash             TEXT NOT NULL,
+    status             TEXT NOT NULL,
+    providerAddress    TEXT NOT NULL,
+    evaluatorAddress   TEXT NOT NULL DEFAULT '',
+    budget             TEXT NOT NULL,
+    deadlineMinutes    INTEGER NOT NULL,
+    createdAt          TEXT NOT NULL,
+    updatedAt          TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_agents_apiKey ON agents(apiKey);
   CREATE INDEX IF NOT EXISTS idx_jobs_agentId  ON jobs(agentId);
 `)
+
+// Column migration — safe to run repeatedly (SQLite throws "duplicate column" on second run).
+try {
+  db.exec(`ALTER TABLE jobs ADD COLUMN evaluatorAddress TEXT NOT NULL DEFAULT ''`)
+  console.log('[storage] Migration: added evaluatorAddress column to jobs table')
+} catch {
+  // Column already exists — nothing to do
+}
 
 // -------------------------------------------------------------------
 // One-time JSON migration
@@ -138,8 +148,8 @@ const stmts = {
   selectAgentByApiKey: db.prepare('SELECT * FROM agents WHERE apiKey = ?'),
 
   insertJob: db.prepare(`
-    INSERT OR REPLACE INTO jobs (jobId, agentId, txHash, status, providerAddress, budget, deadlineMinutes, createdAt, updatedAt)
-    VALUES (@jobId, @agentId, @txHash, @status, @providerAddress, @budget, @deadlineMinutes, @createdAt, @updatedAt)
+    INSERT OR REPLACE INTO jobs (jobId, agentId, txHash, status, providerAddress, evaluatorAddress, budget, deadlineMinutes, createdAt, updatedAt)
+    VALUES (@jobId, @agentId, @txHash, @status, @providerAddress, @evaluatorAddress, @budget, @deadlineMinutes, @createdAt, @updatedAt)
   `),
   selectAllJobs: db.prepare('SELECT * FROM jobs'),
   selectJobById: db.prepare('SELECT * FROM jobs WHERE jobId = ?'),

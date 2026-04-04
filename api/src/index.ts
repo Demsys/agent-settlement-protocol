@@ -413,10 +413,11 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
     // Deadline is a Unix timestamp — contract checks deadline > block.timestamp
     const deadlineTimestamp = BigInt(Math.floor(Date.now() / 1000) + deadlineMins * 60)
 
-    // For the MVP, use the deployer wallet as the evaluator.
-    // address(0) triggers auto-assignment from EvaluatorRegistry which requires
-    // at least one registered staker — not yet set up on this testnet deployment.
-    const evaluatorAddress = manifest.deployer
+    // Pass address(0) to let the EvaluatorRegistry auto-assign a stake-weighted
+    // eligible evaluator. The registry's assignEvaluator() is called inside
+    // createJob() on-chain — it selects pseudo-randomly weighted by stake amount.
+    // Reverts with NoEligibleEvaluator if no staker has completed the warmup period.
+    const evaluatorAddress = ethers.ZeroAddress
     const tokenAddress = manifest.contracts.MockUSDC.address
 
     // Estimate gas first so we fail fast with a clear message if the tx would revert
@@ -453,6 +454,8 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
     }
 
     const onChainJobId: bigint = jobCreatedLog.args[0] as bigint
+    // JobCreated(jobId, client, provider, evaluator, token, deadline)
+    const assignedEvaluator: string = jobCreatedLog.args[3] as string
 
     // Wait until the job is visible on the RPC node before calling setBudget.
     // This replaces a fixed sleep — the retry loop is more reliable on slow nodes.
@@ -469,6 +472,8 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
       return
     }
 
+    console.log(`[createJob] Assigned evaluator: ${assignedEvaluator}`)
+
     const jobId = onChainJobId.toString()
     saveJob({
       jobId,
@@ -476,6 +481,7 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
       txHash: createTx.hash,
       status: 'open',
       providerAddress,
+      evaluatorAddress: assignedEvaluator,
       budget,
       deadlineMinutes: deadlineMins,
       createdAt: new Date().toISOString(),
@@ -686,11 +692,17 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
     return
   }
 
-  // complete() must be called by the evaluator — in this MVP the deployer wallet
-  // plays the evaluator role. Fail fast synchronously if the key is missing.
+  // complete() must be called by the evaluator wallet.
+  // This API server only controls the deployer wallet — verify the assigned evaluator matches.
   const evaluatorSigner = getDeployerWallet()
   if (!evaluatorSigner) {
     apiError(res, 500, 'CONFIG_ERROR', 'PRIVATE_KEY not set — evaluator wallet unavailable')
+    return
+  }
+  const deployerAddress = await evaluatorSigner.getAddress()
+  if (job.evaluatorAddress && job.evaluatorAddress.toLowerCase() !== deployerAddress.toLowerCase()) {
+    apiError(res, 409, 'EVALUATOR_MISMATCH',
+      `Job evaluator is ${job.evaluatorAddress} — this API can only complete jobs assigned to the deployer wallet (${deployerAddress})`)
     return
   }
 
