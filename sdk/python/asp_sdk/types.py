@@ -37,6 +37,7 @@ class JobRecord(BaseModel):
     tx_hash: str = Field(alias="txHash")
     status: JobStatus
     provider_address: str = Field(alias="providerAddress")
+    evaluator_address: str = Field(alias="evaluatorAddress", default="")
     # Human-readable amount, e.g. "5.00"
     budget: str
     deadline_minutes: int = Field(alias="deadlineMinutes")
