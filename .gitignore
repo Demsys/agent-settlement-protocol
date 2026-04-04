@@ -35,3 +35,6 @@ api/data/
 # Claude Code configuration — not for public repo
 .claude/
 CLAUDE.md
+sdk/python/dist/
+sdk/python/asp_sdk.egg-info/
+sdk/python/build/
