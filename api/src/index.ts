@@ -51,6 +51,8 @@ import {
 } from './contracts'
 import { getStats } from './stats'
 import { getDashboardHtml } from './dashboard'
+import { openApiSpec } from './openapi'
+import swaggerUi from 'swagger-ui-express'
 
 // -------------------------------------------------------------------
 // Global error safety net — catches any unhandled promise rejection or
@@ -923,6 +925,20 @@ app.get('/dashboard/stats', async (_req: Request, res: Response) => {
     apiError(res, 500, 'STATS_ERROR', message)
   }
 })
+
+// -------------------------------------------------------------------
+// GET /openapi.json  — machine-readable OpenAPI 3.0 spec
+// GET /docs          — Swagger UI (interactive browser)
+// -------------------------------------------------------------------
+
+app.get('/openapi.json', (_req: Request, res: Response) => {
+  res.json(openApiSpec)
+})
+
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
+  customSiteTitle: 'ASP API Docs',
+  customCss: '.swagger-ui .topbar { display: none }',
+}))
 
 // -------------------------------------------------------------------
 // GET /dashboard
