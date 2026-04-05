@@ -18,6 +18,9 @@ export type { A2ATask, A2ATaskResult, A2AAgentCard, A2AArtifact } from './types'
 export { JobWatcher } from './JobWatcher'
 export type { JobWatcherEvents } from './JobWatcher'
 
+// Evaluator assignment watcher
+export { AssignmentWatcher } from './AssignmentWatcher'
+
 // All shared types
 export type {
   JobStatus,

@@ -1,4 +1,5 @@
 import { JobWatcher } from './JobWatcher'
+import { AssignmentWatcher } from './AssignmentWatcher'
 import { ApiError, BlockchainError } from './errors'
 import type {
   AgentClientOptions,
@@ -117,7 +118,7 @@ async function request<T>(
  *   await client.fundJob(job.jobId)
  */
 export class AgentClient {
-  private readonly apiKey: string
+  private readonly apiKey: string | undefined
   private readonly baseUrl: string
   private readonly timeoutMs: number
 
@@ -307,7 +308,32 @@ export class AgentClient {
    * Fetch the current state of a single job by ID.
    * Used internally by JobWatcher.
    */
+  /**
+   * Watch for jobs assigned to a specific evaluator address.
+   * Polls GET /v1/evaluator/:address/jobs (public endpoint — no API key needed).
+   * Returns an AssignmentWatcher (EventEmitter) that emits typed events.
+   *
+   * Events:
+   *   'assigned'  – new funded job assigned to this evaluator address
+   *   'submitted' – an assigned job's deliverable is ready for evaluation
+   *   'completed' / 'rejected' / 'expired' – terminal transitions
+   *   'error'     – polling error (watcher continues)
+   *
+   * External evaluators (e.g. ThoughtProof) should call complete() directly
+   * on the AgentJobManager contract using their own wallet — the API's
+   * /complete endpoint only handles the deployer wallet.
+   *
+   * @param evaluatorAddress Ethereum address of the evaluator to watch.
+   * @param intervalMs       Polling interval in milliseconds. Defaults to 5 000.
+   */
+  watchForAssignments(
+    evaluatorAddress: string,
+    intervalMs = 5_000,
+  ): AssignmentWatcher {
+    return new AssignmentWatcher(evaluatorAddress, this.baseUrl, intervalMs)
+  }
+
   private async getJobById(jobId: string): Promise<JobRecord> {
-    return this.req<JobRecord>(`${this.baseUrl}/v1/jobs/${jobId}`, { apiKey: this.apiKey })
+    return this.req<JobRecord>(`${this.baseUrl}/v1/jobs/${jobId}`)
   }
 }

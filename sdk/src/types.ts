@@ -39,6 +39,8 @@ export interface JobRecord {
   deadlineMinutes: number
   createdAt: string
   updatedAt: string
+  evaluatorAddress?: string
+  deliverable?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +85,7 @@ export interface AsyncJobResult {
 /** Parameters for AgentClient constructor */
 export interface AgentClientOptions {
   /** API key obtained from POST /v1/agents. Required for authenticated routes. */
-  apiKey: string
+  apiKey?: string
   /**
    * Base URL of the ASP API server.
    * Defaults to http://localhost:3000

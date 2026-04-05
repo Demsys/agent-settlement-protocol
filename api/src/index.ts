@@ -34,7 +34,9 @@ import {
   findAgentById,
   findJobById,
   findJobsByAgentId,
+  findJobsByEvaluatorAddress,
   updateJobStatus,
+  updateJobDeliverable,
   readAgents,
 } from './storage'
 import { generateWallet, walletFromEncrypted } from './wallet'
@@ -660,6 +662,7 @@ app.post('/v1/jobs/:id/submit', requireApiKey, async (req: Request<{ id: string 
       }
 
       updateJobStatus(id, 'submitted', submitTx.hash)
+      updateJobDeliverable(id, deliverable as string)
       console.log(`[submit] Job ${id} submitted — ${basescanTx(submitTx.hash)}`)
     }, `submit job ${id}`).catch((err) => {
       console.error(`[submit] All retries exhausted for job ${id}:`, err)
@@ -746,16 +749,10 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
 // receiving a 202 from fund/submit/complete (which process in background).
 // -------------------------------------------------------------------
 
-app.get('/v1/jobs/:id', requireApiKey, async (req: Request<{ id: string }>, res: Response) => {
-  const agent = res.locals.agent as ReturnType<typeof findAgentByApiKey> & {}
+app.get('/v1/jobs/:id', async (req: Request<{ id: string }>, res: Response) => {
   const job = findJobById(req.params.id)
   if (!job) {
     apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`)
-    return
-  }
-  // SECURITY-002: ownership check — a job can only be read by its creator
-  if (job.agentId !== agent!.agentId) {
-    apiError(res, 403, 'FORBIDDEN', 'This job does not belong to your agent')
     return
   }
 
@@ -778,6 +775,22 @@ app.get('/v1/jobs/:id', requireApiKey, async (req: Request<{ id: string }>, res:
   }
 
   res.json(job)
+})
+
+// -------------------------------------------------------------------
+// GET /v1/evaluator/:address/jobs
+// Public — returns all jobs assigned to the given evaluator address.
+// Used by external evaluators to poll for work assigned to them.
+// -------------------------------------------------------------------
+
+app.get('/v1/evaluator/:address/jobs', (req: Request<{ address: string }>, res: Response) => {
+  const { address } = req.params
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    apiError(res, 400, 'INVALID_ADDRESS', 'address must be a checksummed 0x Ethereum address')
+    return
+  }
+  const jobs = findJobsByEvaluatorAddress(address)
+  res.json({ jobs })
 })
 
 // -------------------------------------------------------------------
