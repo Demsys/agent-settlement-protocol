@@ -32,6 +32,7 @@ export declare namespace IAgentJobManager {
     budget: BigNumberish;
     deadline: BigNumberish;
     createdAt: BigNumberish;
+    submittedAt: BigNumberish;
     status: BigNumberish;
     deliverable: BytesLike;
     reason: BytesLike;
@@ -45,6 +46,7 @@ export declare namespace IAgentJobManager {
     budget: bigint,
     deadline: bigint,
     createdAt: bigint,
+    submittedAt: bigint,
     status: bigint,
     deliverable: string,
     reason: string
@@ -56,6 +58,7 @@ export declare namespace IAgentJobManager {
     budget: bigint;
     deadline: bigint;
     createdAt: bigint;
+    submittedAt: bigint;
     status: bigint;
     deliverable: string;
     reason: string;
@@ -65,6 +68,7 @@ export declare namespace IAgentJobManager {
 export interface AgentJobManagerInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "EVALUATION_GRACE_PERIOD"
       | "GOVERNANCE_DELAY"
       | "MAX_FEE_RATE"
       | "MIN_BUDGET"
@@ -130,6 +134,10 @@ export interface AgentJobManagerInterface extends Interface {
       | "TokenDisallowed"
   ): EventFragment;
 
+  encodeFunctionData(
+    functionFragment: "EVALUATION_GRACE_PERIOD",
+    values?: undefined
+  ): string;
   encodeFunctionData(
     functionFragment: "GOVERNANCE_DELAY",
     values?: undefined
@@ -273,6 +281,10 @@ export interface AgentJobManagerInterface extends Interface {
     values: [AddressLike]
   ): string;
 
+  decodeFunctionResult(
+    functionFragment: "EVALUATION_GRACE_PERIOD",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "GOVERNANCE_DELAY",
     data: BytesLike
@@ -784,6 +796,8 @@ export interface AgentJobManager extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
+  EVALUATION_GRACE_PERIOD: TypedContractMethod<[], [bigint], "view">;
+
   GOVERNANCE_DELAY: TypedContractMethod<[], [bigint], "view">;
 
   MAX_FEE_RATE: TypedContractMethod<[], [bigint], "view">;
@@ -947,6 +961,9 @@ export interface AgentJobManager extends BaseContract {
     key: string | FunctionFragment
   ): T;
 
+  getFunction(
+    nameOrSignature: "EVALUATION_GRACE_PERIOD"
+  ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "GOVERNANCE_DELAY"
   ): TypedContractMethod<[], [bigint], "view">;

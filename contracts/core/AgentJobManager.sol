@@ -99,6 +99,12 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      24 hours is chosen as a reasonable evaluation window for off-chain AI tasks.
     uint256 public constant MIN_EVALUATION_WINDOW = 24 hours;
 
+    /// @notice Grace period after submission during which claimExpired() is blocked.
+    /// @dev Gives off-chain evaluators (AI models, oracles) time to complete verification
+    ///      and call complete() before the client can reclaim funds via claimExpired().
+    ///      1 hour matches the PR#13 merged in erc-8183/base-contracts.
+    uint64 public constant EVALUATION_GRACE_PERIOD = 1 hours;
+
     /// @notice Mandatory delay between a governance proposal and its execution.
     /// @dev FINDING-005 (centralisation): a 2-day window lets stakeholders detect and
     ///      react to malicious or mistaken governance changes before they take effect.
@@ -270,6 +276,9 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /// @notice Thrown when deliverable hash is zero (not allowed in submit).
     error ZeroDeliverable(uint256 jobId);
+
+    /// @notice Thrown when claimExpired() is called during the post-submission grace period.
+    error GracePeriodActive(uint256 jobId, uint64 submittedAt, uint64 graceEndsAt);
 
     /// @notice Thrown when extendDeadline() is called with a newDeadline <= current deadline.
     /// @param current  The job's existing deadline.
@@ -447,6 +456,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             budget:      0,           // Set via setBudget() before fund()
             deadline:    deadline,
             createdAt:   uint64(block.timestamp),
+            submittedAt: 0,           // Set by submit() when the Provider delivers
             status:      JobStatus.Open,
             deliverable: bytes32(0),
             reason:      bytes32(0)
@@ -569,6 +579,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
         // EFFECTS (no token transfers — pure state transition)
         job.status = JobStatus.Submitted;
+        job.submittedAt = uint64(block.timestamp);
         job.deliverable = deliverable;
 
         // FINDING #3: deadline griefing protection.
@@ -789,6 +800,16 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // Deadline must have passed for expiration to be valid.
         if (block.timestamp <= job.deadline) {
             revert DeadlineNotPassed(jobId, job.deadline, uint64(block.timestamp));
+        }
+
+        // Grace period: if the Provider submitted work and the Evaluator has not yet
+        // had time to review it, block claimExpired() for EVALUATION_GRACE_PERIOD after submission.
+        // This prevents a client from front-running a slow off-chain evaluator (AI model, oracle)
+        // that legitimately needs seconds to minutes to complete verification.
+        // Only applies to Submitted jobs — Funded jobs have no submittedAt and are unaffected.
+        if (job.status == JobStatus.Submitted && job.submittedAt != 0 &&
+            block.timestamp < job.submittedAt + EVALUATION_GRACE_PERIOD) {
+            revert GracePeriodActive(jobId, job.submittedAt, uint64(job.submittedAt + EVALUATION_GRACE_PERIOD));
         }
 
         // EFFECTS
