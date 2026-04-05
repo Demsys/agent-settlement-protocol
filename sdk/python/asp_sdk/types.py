@@ -43,6 +43,7 @@ class JobRecord(BaseModel):
     deadline_minutes: int = Field(alias="deadlineMinutes")
     created_at: str = Field(alias="createdAt")
     updated_at: str = Field(alias="updatedAt")
+    deliverable: Optional[str] = Field(None, alias="deliverable")
 
     model_config = {"populate_by_name": True}
 

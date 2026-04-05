@@ -82,6 +82,7 @@ export const openApiSpec = {
           deadlineMinutes:   { type: 'integer', example: 60 },
           createdAt:         { type: 'string', format: 'date-time' },
           updatedAt:         { type: 'string', format: 'date-time' },
+          deliverable:       { type: 'string', nullable: true, description: 'Plaintext deliverable submitted by the provider. Present after the job reaches submitted state.' },
         },
       },
       AsyncJobResult: {
@@ -206,12 +207,28 @@ export const openApiSpec = {
         tags: ['Jobs'],
         summary: 'Get job state',
         description: 'Returns the job record, auto-synced from the chain if a background transaction has completed since last poll.',
-        security: [{ ApiKeyAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: 'On-chain job ID (integer as string).' }],
         responses: {
           200: { description: 'Job record', content: { 'application/json': { schema: { $ref: '#/components/schemas/JobRecord' } } } },
-          403: { description: 'Job belongs to a different agent' },
           404: { description: 'Job not found' },
+        },
+      },
+    },
+    '/v1/evaluator/{address}/jobs': {
+      get: {
+        tags: ['Jobs'],
+        summary: 'List jobs assigned to an evaluator',
+        description: 'Public — returns all jobs where the given wallet address is the assigned evaluator. External evaluators use this to poll for submitted work.',
+        parameters: [{ name: 'address', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' }, description: 'Ethereum wallet address of the evaluator.' }],
+        responses: {
+          200: {
+            description: 'Jobs assigned to the evaluator',
+            content: { 'application/json': { schema: {
+              type: 'object',
+              properties: { jobs: { type: 'array', items: { $ref: '#/components/schemas/JobRecord' } } },
+            }}},
+          },
+          400: { description: 'Invalid address format' },
         },
       },
     },

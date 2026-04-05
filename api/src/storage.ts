@@ -27,6 +27,7 @@ export interface JobRecord {
   deadlineMinutes: number
   createdAt: string
   updatedAt: string
+  deliverable?: string
 }
 
 // -------------------------------------------------------------------
@@ -63,7 +64,8 @@ db.exec(`
     budget             TEXT NOT NULL,
     deadlineMinutes    INTEGER NOT NULL,
     createdAt          TEXT NOT NULL,
-    updatedAt          TEXT NOT NULL
+    updatedAt          TEXT NOT NULL,
+    deliverable        TEXT DEFAULT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_agents_apiKey ON agents(apiKey);
   CREATE INDEX IF NOT EXISTS idx_jobs_agentId  ON jobs(agentId);
@@ -73,6 +75,13 @@ db.exec(`
 try {
   db.exec(`ALTER TABLE jobs ADD COLUMN evaluatorAddress TEXT NOT NULL DEFAULT ''`)
   console.log('[storage] Migration: added evaluatorAddress column to jobs table')
+} catch {
+  // Column already exists — nothing to do
+}
+
+try {
+  db.exec(`ALTER TABLE jobs ADD COLUMN deliverable TEXT DEFAULT NULL`)
+  console.log('[storage] Migration: added deliverable column to jobs table')
 } catch {
   // Column already exists — nothing to do
 }
@@ -154,10 +163,12 @@ const stmts = {
   selectAllJobs: db.prepare('SELECT * FROM jobs'),
   selectJobById: db.prepare('SELECT * FROM jobs WHERE jobId = ?'),
   selectJobsByAgentId: db.prepare('SELECT * FROM jobs WHERE agentId = ?'),
+  selectJobsByEvaluatorAddress: db.prepare('SELECT * FROM jobs WHERE LOWER(evaluatorAddress) = LOWER(?)'),
   updateJobStatus: db.prepare(`
     UPDATE jobs SET status = @status, updatedAt = @updatedAt, txHash = COALESCE(@txHash, txHash)
     WHERE jobId = @jobId
   `),
+  updateJobDeliverable: db.prepare('UPDATE jobs SET deliverable = @deliverable, updatedAt = @updatedAt WHERE jobId = @jobId'),
 }
 
 // -------------------------------------------------------------------
@@ -214,6 +225,15 @@ export function findJobsByAgentId(agentId: string): JobRecord[] {
 
 export function saveJob(job: JobRecord): void {
   stmts.insertJob.run(job)
+}
+
+export function findJobsByEvaluatorAddress(evaluatorAddress: string): JobRecord[] {
+  const rows = stmts.selectJobsByEvaluatorAddress.all(evaluatorAddress) as JobRecord[]
+  return rows.map((r) => ({ ...r, deadlineMinutes: Number(r.deadlineMinutes) }))
+}
+
+export function updateJobDeliverable(jobId: string, deliverable: string): void {
+  stmts.updateJobDeliverable.run({ jobId, deliverable, updatedAt: new Date().toISOString() })
 }
 
 export function updateJobStatus(
