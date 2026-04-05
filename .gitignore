@@ -38,3 +38,4 @@ CLAUDE.md
 sdk/python/dist/
 sdk/python/asp_sdk.egg-info/
 sdk/python/build/
+api/dist/

@@ -15,10 +15,10 @@ const { AgentClient } = require('../sdk/dist/index.js')
 
 const BASE_URL = 'https://agent-settlement-protocol-production.up.railway.app'
 
-// Existing agents from previous sessions
-const ALICE_API_KEY = 'c2f584cbbc494fe8f68fb2a4c91553699dc34ed9a461582964b1b264a9ba21d4'
-const BOB_API_KEY   = 'a922e7ce02afb24b7891bf3289782ca60878504b2d2f84dcdc2c8125c7b7623c'
-const BOB_ADDRESS   = '0x7F2703972E18f00e73B6B2363d754eDD89cBEb01'
+// Replace with your own agent API keys (returned by POST /v1/agents)
+const ALICE_API_KEY = process.env.ALICE_API_KEY ?? ''
+const BOB_API_KEY   = process.env.BOB_API_KEY   ?? ''
+const BOB_ADDRESS   = process.env.BOB_ADDRESS   ?? ''
 
 async function main() {
   console.log('=== ASP SDK — JobWatcher end-to-end test ===\n')
