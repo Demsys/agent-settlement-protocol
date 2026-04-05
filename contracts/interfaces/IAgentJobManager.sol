@@ -50,8 +50,10 @@ interface IAgentJobManager {
 
     /**
      * @notice Full on-chain representation of a Job.
-     * @dev budget and deadline are packed into a single 32-byte storage slot
-     *      (uint128 + uint64 + uint64 = 256 bits) to save gas on frequent reads.
+     * @dev Slot layout (Solidity packs tightly, 32 bytes per slot):
+     *      Slot N:   budget (uint128) + deadline (uint64) + createdAt (uint64) = 256 bits
+     *      Slot N+1: submittedAt (uint64) + status (uint8, JobStatus enum) = 72 bits
+     *                (remaining 184 bits in the slot are unused padding)
      *      budget MUST be zeroed out before any token transfer to guard against
      *      reentrancy even when ReentrancyGuard is present (defense in depth).
      */
@@ -63,6 +65,7 @@ interface IAgentJobManager {
         uint128   budget;       // Amount locked in escrow (in token's native decimals)
         uint64    deadline;     // Unix timestamp — job auto-expires if block.timestamp > deadline
         uint64    createdAt;    // Block timestamp at creation — used for reputation scoring
+        uint64    submittedAt;  // Block timestamp when submit() was called; 0 until then
         JobStatus status;
         bytes32   deliverable;  // Keccak256 hash of the Provider's deliverable (set by submit())
         bytes32   reason;       // Keccak256 hash of the Evaluator's verdict report (set by complete/reject)

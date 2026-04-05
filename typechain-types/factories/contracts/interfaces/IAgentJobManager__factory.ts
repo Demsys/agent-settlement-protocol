@@ -566,6 +566,11 @@ const _abi = [
             type: "uint64",
           },
           {
+            internalType: "uint64",
+            name: "submittedAt",
+            type: "uint64",
+          },
+          {
             internalType: "enum IAgentJobManager.JobStatus",
             name: "status",
             type: "uint8",

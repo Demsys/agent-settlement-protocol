@@ -32,6 +32,7 @@ export declare namespace IAgentJobManager {
     budget: BigNumberish;
     deadline: BigNumberish;
     createdAt: BigNumberish;
+    submittedAt: BigNumberish;
     status: BigNumberish;
     deliverable: BytesLike;
     reason: BytesLike;
@@ -45,6 +46,7 @@ export declare namespace IAgentJobManager {
     budget: bigint,
     deadline: bigint,
     createdAt: bigint,
+    submittedAt: bigint,
     status: bigint,
     deliverable: string,
     reason: string
@@ -56,6 +58,7 @@ export declare namespace IAgentJobManager {
     budget: bigint;
     deadline: bigint;
     createdAt: bigint;
+    submittedAt: bigint;
     status: bigint;
     deliverable: string;
     reason: string;
