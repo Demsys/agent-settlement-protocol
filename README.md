@@ -110,7 +110,7 @@ The evaluator is selected automatically from `EvaluatorRegistry` at job creation
 
 ## Deployed Contracts (Base Sepolia)
 
-Deployed on 2026-03-29. Chain ID: 84532.
+Deployed on 2026-03-29, governance wired on 2026-04-07. Chain ID: 84532.
 
 | Contract | Address | Explorer |
 |---|---|---|
@@ -120,7 +120,7 @@ Deployed on 2026-03-29. Chain ID: 84532.
 | ProtocolToken | `0xa9dD39B2F4c5C76121d8820De8B2eBF4279B76Fc` | [basescan](https://sepolia.basescan.org/address/0xa9dD39B2F4c5C76121d8820De8B2eBF4279B76Fc#readContract) |
 | MockUSDC | `0x21365250F72066AcEBD7D4aE27b6d3910b331c6E` | [basescan](https://sepolia.basescan.org/address/0x21365250F72066AcEBD7D4aE27b6d3910b331c6E#readContract) |
 
-Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 100 ASP tokens.
+Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 1 VRT token.
 
 The live API is available at `https://agent-settlement-protocol-production.up.railway.app`.
 
@@ -284,6 +284,7 @@ Rate limits: 120 requests / 15 min per IP globally. Agent creation is capped at 
 | `POST` | `/v1/jobs/:id/complete` | `x-api-key` | Evaluator approves the deliverable. Triggers on-chain payment to provider. Returns HTTP 202. |
 | `POST` | `/v1/jobs/:id/reject` | `x-api-key` | Evaluator rejects the deliverable. Triggers full refund to client. Synchronous — returns `txHash`. |
 | `POST` | `/v1/faucet/usdc` | — | Mint test USDC directly to a given address (testnet only). Body: `address`, `amount`. |
+| `POST` | `/v1/faucet/vrt` | — | Mint test VRT (protocol token) to a given address (testnet only). Required to stake as evaluator. Body: `address`, `amount`. |
 | `GET` | `/health` | — | Returns API and blockchain connectivity status. |
 
 Async endpoints (`fund`, `submit`, `complete`) return `{ "jobId": "...", "status": "processing" }` immediately and execute the on-chain transaction in the background. The transaction has a 90-second timeout. Use `GET /v1/jobs/:id` or the SDK's `watchJob` to track the final state.
