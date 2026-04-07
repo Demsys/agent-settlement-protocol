@@ -6,10 +6,12 @@ import * as fs from 'fs'
 import { AgentJobManager__factory } from '../../typechain-types/factories/contracts/core/AgentJobManager.sol/AgentJobManager__factory'
 import { EvaluatorRegistry__factory } from '../../typechain-types/factories/contracts/core/EvaluatorRegistry__factory'
 import { MockUSDC__factory } from '../../typechain-types/factories/contracts/test/MockUSDC__factory'
+import { ProtocolToken__factory } from '../../typechain-types/factories/contracts/token/ProtocolToken__factory'
 
 import type { AgentJobManager } from '../../typechain-types/contracts/core/AgentJobManager.sol/AgentJobManager'
 import type { EvaluatorRegistry } from '../../typechain-types/contracts/core/EvaluatorRegistry'
 import type { MockUSDC } from '../../typechain-types/contracts/test/MockUSDC'
+import type { ProtocolToken } from '../../typechain-types/contracts/token/ProtocolToken'
 
 // -------------------------------------------------------------------
 // Deployment manifest
@@ -120,6 +122,13 @@ export function getEvaluatorRegistryReadOnly(): EvaluatorRegistry {
   return EvaluatorRegistry__factory.connect(
     manifest.contracts.EvaluatorRegistry.address,
     provider,
+  )
+}
+
+export function getProtocolTokenWithSigner(signer: ethers.Signer): ProtocolToken {
+  return ProtocolToken__factory.connect(
+    manifest.contracts.ProtocolToken.address,
+    signer,
   )
 }
 
