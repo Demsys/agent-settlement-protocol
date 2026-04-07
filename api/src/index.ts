@@ -764,7 +764,7 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
 // -------------------------------------------------------------------
 
 app.get('/v1/jobs/:id', async (req: Request<{ id: string }>, res: Response) => {
-  const job = findJobById(req.params.id)
+  let job = findJobById(req.params.id)
   if (!job) {
     apiError(res, 404, 'JOB_NOT_FOUND', `Job ${req.params.id} not found`)
     return
@@ -777,6 +777,16 @@ app.get('/v1/jobs/:id', async (req: Request<{ id: string }>, res: Response) => {
     try {
       const onChainJob = await getJobManagerReadOnly().getJob(BigInt(job.jobId))
       const onChainStatus = JOB_STATUS_MAP[Number(onChainJob.status)] as typeof job.status | undefined
+      const onChainEvaluator = onChainJob.evaluator as string
+
+      // Sync evaluatorAddress if the DB has address(0) but the contract has a real one
+      if (onChainEvaluator && onChainEvaluator !== ethers.ZeroAddress &&
+          (!job.evaluatorAddress || job.evaluatorAddress === ethers.ZeroAddress)) {
+        updateJobEvaluator(job.jobId, onChainEvaluator)
+        job = { ...job, evaluatorAddress: onChainEvaluator }
+        console.log(`[sync] Job ${job.jobId}: evaluator synced → ${onChainEvaluator}`)
+      }
+
       if (onChainStatus && onChainStatus !== job.status) {
         console.log(`[sync] Job ${job.jobId}: local=${job.status} → on-chain=${onChainStatus}`)
         updateJobStatus(job.jobId, onChainStatus)
