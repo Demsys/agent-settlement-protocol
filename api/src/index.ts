@@ -49,6 +49,7 @@ import {
   getJobManagerWithSigner,
   getMockUSDCWithSigner,
   getMockUSDCReadOnly,
+  getProtocolTokenWithSigner,
   USDC_DECIMALS,
   JOB_STATUS_MAP,
 } from './contracts'
@@ -275,6 +276,53 @@ app.post('/v1/faucet/usdc', async (req: Request, res: Response) => {
       console.log(`[faucet] Minted ${amountStr} USDC to ${address} — ${basescanTx(tx.hash)}`)
     } catch (err) {
       console.error(`[faucet] Failed to mint USDC to ${address}:`, err)
+    }
+  })
+})
+
+// -------------------------------------------------------------------
+// POST /v1/faucet/vrt
+// Testnet only — mints ProtocolToken (VRT) to any address via deployer
+// -------------------------------------------------------------------
+
+app.post('/v1/faucet/vrt', async (req: Request, res: Response) => {
+  const { address, amount = '100' } = req.body as { address?: unknown; amount?: unknown }
+
+  if (!address || typeof address !== 'string' || !ethers.isAddress(address)) {
+    apiError(res, 400, 'INVALID_ADDRESS', 'address must be a valid Ethereum address')
+    return
+  }
+  const amountStr = String(amount)
+  if (!/^\d+(\.\d+)?$/.test(amountStr)) {
+    apiError(res, 400, 'INVALID_AMOUNT', 'amount must be a decimal string (e.g. "100")')
+    return
+  }
+  if (parseFloat(amountStr) > 1_000) {
+    apiError(res, 400, 'INVALID_AMOUNT', 'faucet amount cannot exceed 1000 VRT')
+    return
+  }
+
+  if (!getDeployerWallet()) {
+    apiError(res, 503, 'NO_DEPLOYER', 'Deployer key not configured')
+    return
+  }
+
+  res.json({ address, amount: amountStr, status: 'processing' })
+
+  setImmediate(async () => {
+    try {
+      const deployer = getDeployerWallet()!
+      const token = getProtocolTokenWithSigner(deployer)
+      const amountWei = ethers.parseEther(amountStr)
+      const tx = await token.mint(address, amountWei)
+      const receipt = await withTimeout(tx.wait(1), 'faucet vrt mint')
+      if (!receipt || receipt.status === 0) {
+        console.error(`[faucet/vrt] Mint transaction reverted for ${address}`)
+        return
+      }
+      console.log(`[faucet/vrt] Minted ${amountStr} VRT to ${address} — ${basescanTx(tx.hash)}`)
+    } catch (err) {
+      console.error(`[faucet/vrt] Failed to mint VRT to ${address}:`, err)
     }
   })
 })

@@ -310,6 +310,35 @@ export const openApiSpec = {
         },
       },
     },
+    '/v1/faucet/vrt': {
+      post: {
+        tags: ['Faucet'],
+        summary: 'Mint test VRT',
+        description: 'Testnet only. Mints ProtocolToken (VRT) to any address via the deployer wallet. Required to stake as evaluator. Max 1000 VRT per call.',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: {
+            type: 'object',
+            required: ['address'],
+            properties: {
+              address: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+              amount:  { type: 'string', default: '100', example: '100', description: 'VRT amount to mint (max 1000).' },
+            },
+          }}},
+        },
+        responses: {
+          200: { description: 'Mint enqueued', content: { 'application/json': { schema: {
+            type: 'object',
+            properties: {
+              address: { type: 'string' },
+              amount:  { type: 'string' },
+              status:  { type: 'string', enum: ['processing'] },
+            },
+          }}}},
+          503: { description: 'Deployer key not configured' },
+        },
+      },
+    },
     '/v1/faucet/usdc': {
       post: {
         tags: ['Faucet'],
