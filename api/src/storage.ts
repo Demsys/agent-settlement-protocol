@@ -169,6 +169,7 @@ const stmts = {
     WHERE jobId = @jobId
   `),
   updateJobDeliverable: db.prepare('UPDATE jobs SET deliverable = @deliverable, updatedAt = @updatedAt WHERE jobId = @jobId'),
+  updateJobEvaluator: db.prepare('UPDATE jobs SET evaluatorAddress = @evaluatorAddress, updatedAt = @updatedAt WHERE jobId = @jobId'),
 }
 
 // -------------------------------------------------------------------
@@ -234,6 +235,10 @@ export function findJobsByEvaluatorAddress(evaluatorAddress: string): JobRecord[
 
 export function updateJobDeliverable(jobId: string, deliverable: string): void {
   stmts.updateJobDeliverable.run({ jobId, deliverable, updatedAt: new Date().toISOString() })
+}
+
+export function updateJobEvaluator(jobId: string, evaluatorAddress: string): void {
+  stmts.updateJobEvaluator.run({ jobId, evaluatorAddress, updatedAt: new Date().toISOString() })
 }
 
 export function updateJobStatus(

@@ -37,6 +37,7 @@ import {
   findJobsByEvaluatorAddress,
   updateJobStatus,
   updateJobDeliverable,
+  updateJobEvaluator,
   readAgents,
 } from './storage'
 import { generateWallet, walletFromEncrypted } from './wallet'
@@ -597,6 +598,19 @@ app.post('/v1/jobs/:id/fund', requireApiKey, async (req: Request<{ id: string }>
       }
 
       updateJobStatus(id, 'funded', fundTx.hash)
+
+      // Read the assigned evaluator from the contract (auto-assigned during fund())
+      try {
+        const onChainJob = await getJobManagerReadOnly().getJob(onChainJobId)
+        const assignedEvaluator = onChainJob.evaluator as string
+        if (assignedEvaluator && assignedEvaluator !== ethers.ZeroAddress) {
+          updateJobEvaluator(id, assignedEvaluator)
+          console.log(`[fund] Job ${id} evaluator assigned: ${assignedEvaluator}`)
+        }
+      } catch (err) {
+        console.warn(`[fund] Could not read assigned evaluator for job ${id}:`, err)
+      }
+
       console.log(`[fund] Job ${id} funded — ${basescanTx(fundTx.hash)}`)
     }, `fund job ${id}`).catch((err) => {
       console.error(`[fund] All retries exhausted for job ${id}:`, err)
