@@ -28,6 +28,8 @@ export interface EvaluatorRegistryInterface extends Interface {
     nameOrSignature:
       | "GOVERNANCE_DELAY"
       | "MAX_ACTIVE_EVALUATORS"
+      | "MAX_ASSIGNMENT_RETRIES"
+      | "MAX_METADATA_LENGTH"
       | "MAX_WARMUP_PERIOD"
       | "MIN_WARMUP_PERIOD"
       | "assignEvaluator"
@@ -35,6 +37,7 @@ export interface EvaluatorRegistryInterface extends Interface {
       | "executeJobManager"
       | "executeMinEvaluatorStake"
       | "getEvaluatorCount"
+      | "getMetadata"
       | "getStake"
       | "isEligible"
       | "jobManager"
@@ -44,6 +47,7 @@ export interface EvaluatorRegistryInterface extends Interface {
       | "proposeMinEvaluatorStake"
       | "protocolToken"
       | "renounceOwnership"
+      | "setMetadata"
       | "setSlashPaused"
       | "setWarmupPeriod"
       | "slash"
@@ -57,6 +61,7 @@ export interface EvaluatorRegistryInterface extends Interface {
   getEvent(
     nameOrSignatureOrTopic:
       | "EvaluatorAssigned"
+      | "EvaluatorMetadataUpdated"
       | "EvaluatorSlashed"
       | "JobManagerProposed"
       | "JobManagerUpdated"
@@ -80,6 +85,14 @@ export interface EvaluatorRegistryInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "MAX_ASSIGNMENT_RETRIES",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "MAX_METADATA_LENGTH",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "MAX_WARMUP_PERIOD",
     values?: undefined
   ): string;
@@ -89,7 +102,7 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "assignEvaluator",
-    values: [BigNumberish]
+    values: [BigNumberish, AddressLike, AddressLike]
   ): string;
   encodeFunctionData(
     functionFragment: "cancelProposal",
@@ -106,6 +119,10 @@ export interface EvaluatorRegistryInterface extends Interface {
   encodeFunctionData(
     functionFragment: "getEvaluatorCount",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getMetadata",
+    values: [AddressLike]
   ): string;
   encodeFunctionData(
     functionFragment: "getStake",
@@ -140,6 +157,7 @@ export interface EvaluatorRegistryInterface extends Interface {
     functionFragment: "renounceOwnership",
     values?: undefined
   ): string;
+  encodeFunctionData(functionFragment: "setMetadata", values: [string]): string;
   encodeFunctionData(
     functionFragment: "setSlashPaused",
     values: [boolean]
@@ -150,7 +168,7 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "slash",
-    values: [AddressLike, BigNumberish]
+    values: [AddressLike, BigNumberish, BigNumberish, BytesLike]
   ): string;
   encodeFunctionData(
     functionFragment: "slashPaused",
@@ -176,6 +194,14 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): Result;
   decodeFunctionResult(
     functionFragment: "MAX_ACTIVE_EVALUATORS",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "MAX_ASSIGNMENT_RETRIES",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "MAX_METADATA_LENGTH",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -206,6 +232,10 @@ export interface EvaluatorRegistryInterface extends Interface {
     functionFragment: "getEvaluatorCount",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "getMetadata",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "getStake", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "isEligible", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "jobManager", data: BytesLike): Result;
@@ -228,6 +258,10 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "setMetadata",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -268,21 +302,40 @@ export namespace EvaluatorAssignedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace EvaluatorMetadataUpdatedEvent {
+  export type InputTuple = [evaluator: AddressLike, metadata: string];
+  export type OutputTuple = [evaluator: string, metadata: string];
+  export interface OutputObject {
+    evaluator: string;
+    metadata: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace EvaluatorSlashedEvent {
   export type InputTuple = [
     evaluator: AddressLike,
+    jobId: BigNumberish,
     amount: BigNumberish,
-    remainingStake: BigNumberish
+    remainingStake: BigNumberish,
+    reason: BytesLike
   ];
   export type OutputTuple = [
     evaluator: string,
+    jobId: bigint,
     amount: bigint,
-    remainingStake: bigint
+    remainingStake: bigint,
+    reason: string
   ];
   export interface OutputObject {
     evaluator: string;
+    jobId: bigint;
     amount: bigint;
     remainingStake: bigint;
+    reason: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -504,12 +557,16 @@ export interface EvaluatorRegistry extends BaseContract {
 
   MAX_ACTIVE_EVALUATORS: TypedContractMethod<[], [bigint], "view">;
 
+  MAX_ASSIGNMENT_RETRIES: TypedContractMethod<[], [bigint], "view">;
+
+  MAX_METADATA_LENGTH: TypedContractMethod<[], [bigint], "view">;
+
   MAX_WARMUP_PERIOD: TypedContractMethod<[], [bigint], "view">;
 
   MIN_WARMUP_PERIOD: TypedContractMethod<[], [bigint], "view">;
 
   assignEvaluator: TypedContractMethod<
-    [jobId: BigNumberish],
+    [jobId: BigNumberish, provider: AddressLike, client: AddressLike],
     [string],
     "nonpayable"
   >;
@@ -529,6 +586,8 @@ export interface EvaluatorRegistry extends BaseContract {
   >;
 
   getEvaluatorCount: TypedContractMethod<[], [bigint], "view">;
+
+  getMetadata: TypedContractMethod<[evaluator: AddressLike], [string], "view">;
 
   getStake: TypedContractMethod<[evaluator: AddressLike], [bigint], "view">;
 
@@ -556,6 +615,8 @@ export interface EvaluatorRegistry extends BaseContract {
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
 
+  setMetadata: TypedContractMethod<[metadata: string], [void], "nonpayable">;
+
   setSlashPaused: TypedContractMethod<[paused: boolean], [void], "nonpayable">;
 
   setWarmupPeriod: TypedContractMethod<
@@ -565,7 +626,12 @@ export interface EvaluatorRegistry extends BaseContract {
   >;
 
   slash: TypedContractMethod<
-    [evaluator: AddressLike, amount: BigNumberish],
+    [
+      evaluator: AddressLike,
+      amount: BigNumberish,
+      jobId: BigNumberish,
+      reason: BytesLike
+    ],
     [void],
     "nonpayable"
   >;
@@ -595,6 +661,12 @@ export interface EvaluatorRegistry extends BaseContract {
     nameOrSignature: "MAX_ACTIVE_EVALUATORS"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
+    nameOrSignature: "MAX_ASSIGNMENT_RETRIES"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "MAX_METADATA_LENGTH"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "MAX_WARMUP_PERIOD"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
@@ -602,7 +674,11 @@ export interface EvaluatorRegistry extends BaseContract {
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "assignEvaluator"
-  ): TypedContractMethod<[jobId: BigNumberish], [string], "nonpayable">;
+  ): TypedContractMethod<
+    [jobId: BigNumberish, provider: AddressLike, client: AddressLike],
+    [string],
+    "nonpayable"
+  >;
   getFunction(
     nameOrSignature: "cancelProposal"
   ): TypedContractMethod<[key: BytesLike], [void], "nonpayable">;
@@ -615,6 +691,9 @@ export interface EvaluatorRegistry extends BaseContract {
   getFunction(
     nameOrSignature: "getEvaluatorCount"
   ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "getMetadata"
+  ): TypedContractMethod<[evaluator: AddressLike], [string], "view">;
   getFunction(
     nameOrSignature: "getStake"
   ): TypedContractMethod<[evaluator: AddressLike], [bigint], "view">;
@@ -643,6 +722,9 @@ export interface EvaluatorRegistry extends BaseContract {
     nameOrSignature: "renounceOwnership"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "setMetadata"
+  ): TypedContractMethod<[metadata: string], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "setSlashPaused"
   ): TypedContractMethod<[paused: boolean], [void], "nonpayable">;
   getFunction(
@@ -651,7 +733,12 @@ export interface EvaluatorRegistry extends BaseContract {
   getFunction(
     nameOrSignature: "slash"
   ): TypedContractMethod<
-    [evaluator: AddressLike, amount: BigNumberish],
+    [
+      evaluator: AddressLike,
+      amount: BigNumberish,
+      jobId: BigNumberish,
+      reason: BytesLike
+    ],
     [void],
     "nonpayable"
   >;
@@ -677,6 +764,13 @@ export interface EvaluatorRegistry extends BaseContract {
     EvaluatorAssignedEvent.InputTuple,
     EvaluatorAssignedEvent.OutputTuple,
     EvaluatorAssignedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EvaluatorMetadataUpdated"
+  ): TypedContractEvent<
+    EvaluatorMetadataUpdatedEvent.InputTuple,
+    EvaluatorMetadataUpdatedEvent.OutputTuple,
+    EvaluatorMetadataUpdatedEvent.OutputObject
   >;
   getEvent(
     key: "EvaluatorSlashed"
@@ -775,7 +869,18 @@ export interface EvaluatorRegistry extends BaseContract {
       EvaluatorAssignedEvent.OutputObject
     >;
 
-    "EvaluatorSlashed(address,uint256,uint256)": TypedContractEvent<
+    "EvaluatorMetadataUpdated(address,string)": TypedContractEvent<
+      EvaluatorMetadataUpdatedEvent.InputTuple,
+      EvaluatorMetadataUpdatedEvent.OutputTuple,
+      EvaluatorMetadataUpdatedEvent.OutputObject
+    >;
+    EvaluatorMetadataUpdated: TypedContractEvent<
+      EvaluatorMetadataUpdatedEvent.InputTuple,
+      EvaluatorMetadataUpdatedEvent.OutputTuple,
+      EvaluatorMetadataUpdatedEvent.OutputObject
+    >;
+
+    "EvaluatorSlashed(address,uint256,uint256,uint256,bytes32)": TypedContractEvent<
       EvaluatorSlashedEvent.InputTuple,
       EvaluatorSlashedEvent.OutputTuple,
       EvaluatorSlashedEvent.OutputObject

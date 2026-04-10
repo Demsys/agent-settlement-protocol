@@ -297,6 +297,18 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      to inflict a negative reputation signal after the escrow window has closed.
     error DeadlineAlreadyPassed(uint256 jobId);
 
+    /// @notice Thrown when the assigned evaluator (auto or explicit) conflicts with the
+    ///         provider or client of the same job.
+    /// @dev Belt-and-suspenders guard covering both the auto-assignment path (which already
+    ///      enforces independence via re-draw) and the explicit evaluator path (where the
+    ///      client may have set evaluator == provider intentionally or by mistake at createJob
+    ///      time, and the conflict only becomes detectable at fund() once provider is known
+    ///      alongside the evaluator).
+    /// @param jobId     The job where the conflict was detected.
+    /// @param evaluator The conflicting evaluator address.
+    /// @param role      The conflicting role: "provider" or "client".
+    error EvaluatorConflict(uint256 jobId, address evaluator, string role);
+
     // ─── Modifiers ────────────────────────────────────────────────────────────
 
     /**
@@ -535,8 +547,21 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             // External call to EvaluatorRegistry — this is safe before our state change
             // because EvaluatorRegistry cannot call back into fund() (no reentrancy vector:
             // assignEvaluator is restricted to onlyJobManager == address(this)).
-            job.evaluator = evaluatorRegistry.assignEvaluator(jobId);
+            // provider and client are passed so the registry can enforce independence via
+            // its re-draw loop (MAX_ASSIGNMENT_RETRIES attempts).
+            job.evaluator = evaluatorRegistry.assignEvaluator(jobId, job.provider, job.client);
         }
+
+        // Post-assignment independence check: evaluator must not be provider or client.
+        // For the auto-assignment path the registry already enforces this via re-draw —
+        // this is an explicit belt-and-suspenders guard that also covers explicit evaluators
+        // set at createJob() time (where the conflict may not have been detectable until now).
+        // We prefer the redundant check over trusting the registry exclusively because a
+        // future registry upgrade or a misconfigured registry address could bypass the
+        // re-draw logic, and the consequence (evaluator == provider or client) is a critical
+        // conflict of interest that directly threatens fund security.
+        if (job.evaluator == job.provider) revert EvaluatorConflict(jobId, job.evaluator, "provider");
+        if (job.evaluator == job.client)   revert EvaluatorConflict(jobId, job.evaluator, "client");
 
         job.status = JobStatus.Funded;
 

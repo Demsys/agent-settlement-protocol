@@ -421,8 +421,9 @@ app.post('/v1/agents', agentCreationLimiter, async (req: Request, res: Response)
 app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
   const agent = res.locals.agent as ReturnType<typeof findAgentByApiKey> & {}
 
-  const { providerAddress, budget, deadlineMinutes = 60 } = req.body as {
+  const { providerAddress, evaluatorAddress: evaluatorAddressRaw, budget, deadlineMinutes = 60 } = req.body as {
     providerAddress?: unknown
+    evaluatorAddress?: unknown
     budget?: unknown
     deadlineMinutes?: unknown
   }
@@ -464,11 +465,13 @@ app.post('/v1/jobs', requireApiKey, async (req: Request, res: Response) => {
     // Deadline is a Unix timestamp — contract checks deadline > block.timestamp
     const deadlineTimestamp = BigInt(Math.floor(Date.now() / 1000) + deadlineMins * 60)
 
-    // Pass address(0) to let the EvaluatorRegistry auto-assign a stake-weighted
-    // eligible evaluator. The registry's assignEvaluator() is called inside
-    // createJob() on-chain — it selects pseudo-randomly weighted by stake amount.
-    // Reverts with NoEligibleEvaluator if no staker has completed the warmup period.
-    const evaluatorAddress = ethers.ZeroAddress
+    // Use explicit evaluator if provided and valid, otherwise auto-assign via EvaluatorRegistry.
+    // Auto-assignment (ZeroAddress) triggers assignEvaluator() inside fund(), selecting
+    // a stake-weighted eligible evaluator from the registry pool.
+    const evaluatorAddress =
+      evaluatorAddressRaw && typeof evaluatorAddressRaw === 'string' && ethers.isAddress(evaluatorAddressRaw)
+        ? evaluatorAddressRaw
+        : ethers.ZeroAddress
     const tokenAddress = manifest.contracts.MockUSDC.address
 
     // Estimate gas first so we fail fast with a clear message if the tx would revert

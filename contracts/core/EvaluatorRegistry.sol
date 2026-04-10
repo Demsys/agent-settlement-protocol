@@ -70,7 +70,9 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     event EvaluatorAssigned(uint256 indexed jobId, address indexed evaluator);
 
     /// @notice Emitted when an evaluator is slashed by the job manager.
-    event EvaluatorSlashed(address indexed evaluator, uint256 amount, uint256 remainingStake);
+    /// @dev jobId is indexed so off-chain monitors can correlate a slash event with
+    ///      the specific job that triggered it — useful for dispute tooling and ERC-8210 claims.
+    event EvaluatorSlashed(address indexed evaluator, uint256 indexed jobId, uint256 amount, uint256 remainingStake, bytes32 reason);
 
     /// @notice Emitted when the owner updates the warmup period.
     event WarmupPeriodUpdated(uint64 newPeriod);
@@ -79,6 +81,9 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @dev Both old and new values are logged so indexers can track governance history
     ///      and evaluators can react to deactivation caused by a raised minimum.
     event MinEvaluatorStakeUpdated(uint256 oldMinimum, uint256 newMinimum);
+
+    /// @notice Emitted when an evaluator updates their off-chain metadata URI or JSON blob.
+    event EvaluatorMetadataUpdated(address indexed evaluator, string metadata);
 
     /// @notice Emitted when the owner updates the slash pause state.
     /// @dev The slash pause is the only emergency mechanism in EvaluatorRegistry that
@@ -144,11 +149,23 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @param maximum  The maximum allowed warmup period (30 days).
     error WarmupPeriodTooLong(uint64 proposed, uint64 maximum);
 
+    /// @notice Thrown when setMetadata() is called with a string exceeding MAX_METADATA_LENGTH.
+    error MetadataTooLong(uint256 length, uint256 maximum);
+
     /// @notice Thrown when setWarmupPeriod() is called with a period below the 1-day floor.
     /// @dev AUDIT-H4: prevents instant Sybil attacks via setWarmupPeriod(0).
     /// @param proposed The warmup period that was proposed.
     /// @param minimum  The minimum allowed warmup period (1 day).
     error WarmupPeriodTooShort(uint64 proposed, uint64 minimum);
+
+    /// @notice Thrown when setMetadata() is called by an address that is not an active evaluator.
+    /// @dev An inactive evaluator (below minEvaluatorStake or never staked) has no
+    ///      slot in the selection pool, so publishing metadata would be misleading.
+    error NotActive(address evaluator);
+
+    /// @notice Thrown when assignEvaluator() cannot find a candidate that is independent
+    ///         of both the job's provider and client within MAX_ASSIGNMENT_RETRIES attempts.
+    error EvaluatorAssignmentFailed(uint256 jobId, address provider, address client);
 
     // ── Governance timelock errors ────────────────────────────────────────────
 
@@ -183,6 +200,11 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @dev 30 days is already a very conservative anti-Sybil window. A higher value
     ///      would risk starving the registry of eligible evaluators during bootstrapping.
     uint64 public constant MAX_WARMUP_PERIOD = 30 days;
+
+    /// @notice Maximum byte length of the metadata string stored via setMetadata().
+    /// @dev 2048 bytes accommodates any URI or compact JSON profile without enabling
+    ///      state bloat attacks. Larger values approach the block gas limit on Base.
+    uint256 public constant MAX_METADATA_LENGTH = 2048;
 
     /// @notice Absolute floor on the warmup period, enforced in setWarmupPeriod().
     /// @dev AUDIT-H4: setWarmupPeriod(0) would instantly eliminate all anti-Sybil
@@ -242,6 +264,13 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @dev Used for O(n) weighted random selection. In production with thousands of
     ///      evaluators, this should be replaced with a more efficient data structure.
     address[] private activeEvaluators;
+
+    /// @notice Off-chain metadata per evaluator (URI or JSON blob), stored separately
+    ///         from the Evaluator struct to avoid increasing its storage footprint.
+    /// @dev A separate mapping is used instead of a struct field so that the existing
+    ///      struct slot layout (and thus all storage offsets) is unchanged — critical
+    ///      for future proxy upgrade compatibility and audit reproducibility.
+    mapping(address => string) private _evaluatorMetadata;
 
     // ─── Governance timelock state ────────────────────────────────────────────
 
@@ -375,6 +404,12 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         emit Unstaked(msg.sender, amount, eval.stakedAmount);
     }
 
+    /// @notice Maximum number of re-draw attempts in assignEvaluator() before reverting.
+    /// @dev Three attempts gives a ~87.5% success rate when 1/2 of warmed-up stake belongs
+    ///      to the excluded parties — an extreme case. In practice, provider and client are
+    ///      almost never registered evaluators, so the first draw almost always succeeds.
+    uint256 public constant MAX_ASSIGNMENT_RETRIES = 5;
+
     /**
      * @notice Pseudo-randomly assigns an eligible evaluator to a job.
      * @dev RESTRICTED: only callable by the AgentJobManager contract.
@@ -385,24 +420,28 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      *      manipulable by the Base sequencer (Coinbase). On Base L2, block.prevrandao does not
      *      carry the same entropy as on Ethereum mainnet post-Merge — the L2 sequencer can
      *      influence block metadata within certain bounds. We mitigate this by combining
-     *      five independent entropy sources:
+     *      six independent entropy sources (including the attempt counter):
      *        - block.prevrandao: sequencer-influenced randomness beacon
      *        - blockhash(block.number - 1): previous block hash, harder to predict in advance
      *        - block.timestamp: block time, manipulable only by ±15s
      *        - jobId: job-specific entropy, different for every assignment
      *        - activeEvaluators.length: registry state at assignment time
-     *      This combination significantly raises the cost of manipulation compared to a single
-     *      source, but is NOT cryptographically secure. For production use with high-value jobs
-     *      where evaluator selection is worth gaming, consider upgrading to Chainlink VRF v2.
-     *      The current implementation is acceptable for testnet and low-to-medium value mainnet
-     *      use where the economic incentive to manipulate is lower than the sequencer's cost.
+     *        - attempt: loop counter, makes each re-draw use a different random point
+     *      This combination significantly raises the cost of manipulation. The re-draw loop
+     *      adds a further independence guarantee: if the first draw lands on provider or
+     *      client, up to MAX_ASSIGNMENT_RETRIES more draws are made. This prevents a
+     *      scenario where provider/client registered as evaluators could influence selection
+     *      by controlling a large stake fraction.
+     *      NOT cryptographically secure — for high-value mainnet use consider Chainlink VRF.
      *
      *      Entropy sources: block.prevrandao (EIP-4399), blockhash(block.number - 1),
-     *      block.timestamp, jobId, and activeEvaluators.length.
-     * @param jobId The job ID for which to assign an evaluator (used as entropy).
+     *      block.timestamp, jobId, activeEvaluators.length, and attempt.
+     * @param jobId    The job ID for which to assign an evaluator (used as entropy).
+     * @param provider The job's provider address — must NOT be selected as evaluator.
+     * @param client   The job's client address — must NOT be selected as evaluator.
      * @return assigned The address of the selected evaluator.
      */
-    function assignEvaluator(uint256 jobId) external onlyJobManager returns (address assigned) {
+    function assignEvaluator(uint256 jobId, address provider, address client) external onlyJobManager returns (address assigned) {
         uint256 count = activeEvaluators.length;
         if (count == 0) revert NoEligibleEvaluators();
 
@@ -432,44 +471,68 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         // or after a mass-slash event. The caller (fund()) should surface this revert to the user.
         if (totalStake == 0) revert NoEligibleEvaluators();
 
-        // Generate a pseudo-random point in [0, totalStake).
-        // We use keccak256 rather than a simple modulo to avoid bias from small totalStake values.
+        // Re-draw loop: up to MAX_ASSIGNMENT_RETRIES attempts to find a candidate that is
+        // neither the job's provider nor its client. Each attempt uses a different random point
+        // by incorporating the attempt counter into the keccak256 pre-image.
         //
-        // FINDING #2 fix: five entropy sources combined to raise the cost of sequencer manipulation.
+        // Why re-draw instead of excluding and re-weighting totalStake:
+        //   Re-weighting would require a second O(n) pass to subtract provider/client stake,
+        //   increasing gas cost. Re-draw is O(1) per attempt and nearly always succeeds on
+        //   the first try — provider and client are almost never registered evaluators.
+        //   Security: if all MAX_ASSIGNMENT_RETRIES draws land on excluded addresses, the call
+        //   reverts, preventing a scenario where a provider/client controlling > 50% of
+        //   eligible stake could systematically self-assign as evaluator by exhausting retries.
+        //
+        // FINDING #2 fix: six entropy sources combined to raise the cost of sequencer manipulation.
         // blockhash(block.number - 1) is included because it is determined by the previous block
         // and cannot be known when the current transaction is being constructed, making it harder
         // for the sequencer to predict and target a specific evaluator.
         // activeEvaluators.length adds registry state entropy — different for every pool composition.
-        uint256 randomPoint = uint256(
-            keccak256(
-                abi.encodePacked(
-                    block.prevrandao,           // EIP-4399 randomness beacon (post-Merge)
-                    blockhash(block.number - 1), // previous block hash — unknown at tx construction time
-                    block.timestamp,             // block time adds unpredictability for same-block jobs
-                    jobId,                       // job-specific entropy — unique per assignment
-                    activeEvaluators.length      // registry state at assignment time
+        // attempt ensures each re-draw in the loop yields a distinct random point.
+        for (uint256 attempt = 0; attempt < MAX_ASSIGNMENT_RETRIES; ) {
+            uint256 randomPoint = uint256(
+                keccak256(
+                    abi.encodePacked(
+                        block.prevrandao,            // EIP-4399 randomness beacon (post-Merge)
+                        blockhash(block.number - 1), // previous block hash — unknown at tx construction time
+                        block.timestamp,             // block time adds unpredictability for same-block jobs
+                        jobId,                       // job-specific entropy — unique per assignment
+                        activeEvaluators.length,     // registry state at assignment time
+                        attempt                      // loop counter — distinct point per re-draw
+                    )
                 )
-            )
-        ) % totalStake;
+            ) % totalStake;
 
-        // Walk the active evaluators array and select the one whose cumulative warmed-up
-        // stake window contains the random point (stake-weighted selection, warmup-filtered).
-        uint256 cumulative = 0;
-        for (uint256 i = 0; i < count; ) {
-            // Skip evaluators still in their warmup period — same filter as above.
-            if (evaluators[activeEvaluators[i]].activeSince <= warmupThreshold) {
-                cumulative += evaluators[activeEvaluators[i]].stakedAmount;
-                if (randomPoint < cumulative) {
-                    assigned = activeEvaluators[i];
-                    break;
+            // Walk the active evaluators array and select the one whose cumulative warmed-up
+            // stake window contains the random point (stake-weighted selection, warmup-filtered).
+            uint256 cumulative = 0;
+            address candidate = address(0);
+            for (uint256 i = 0; i < count; ) {
+                // Skip evaluators still in their warmup period — same filter as above.
+                if (evaluators[activeEvaluators[i]].activeSince <= warmupThreshold) {
+                    cumulative += evaluators[activeEvaluators[i]].stakedAmount;
+                    if (randomPoint < cumulative) {
+                        candidate = activeEvaluators[i];
+                        break;
+                    }
                 }
+                unchecked { ++i; }
             }
-            unchecked { ++i; }
+
+            // Accept the candidate only if it is neither the provider nor the client.
+            // An evaluator who is also the provider could approve their own work; one who is
+            // also the client could self-refund by rejecting. Both are critical conflicts of interest.
+            if (candidate != address(0) && candidate != provider && candidate != client) {
+                assigned = candidate;
+                break;
+            }
+            unchecked { ++attempt; }
         }
 
-        // assigned should always be set because randomPoint < totalStake and we only
-        // counted warmed-up stake, but we guard against edge cases to prevent address(0).
-        if (assigned == address(0)) revert NoEligibleEvaluators();
+        // If all retries were exhausted without finding an independent evaluator, revert.
+        // This is an extreme edge case (requires provider/client to collectively hold nearly
+        // all warmed-up stake) but must be handled rather than silently assigning address(0).
+        if (assigned == address(0)) revert EvaluatorAssignmentFailed(jobId, provider, client);
 
         emit EvaluatorAssigned(jobId, assigned);
     }
@@ -483,8 +546,11 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      *      deactivated automatically.
      * @param evaluator Address of the evaluator to slash.
      * @param amount    Amount of ProtocolToken to slash (in wei, 18 decimals).
+     * @param jobId     Job ID that triggered the slash (passed through to the event for
+     *                  off-chain correlations and ERC-8210 dispute tooling).
+     * @param reason    Keccak256 hash of the slash rationale (bytes32(0) if none).
      */
-    function slash(address evaluator, uint256 amount) external onlyJobManager nonReentrant {
+    function slash(address evaluator, uint256 amount, uint256 jobId, bytes32 reason) external onlyJobManager nonReentrant {
         // CHECKS
         // AUDIT-H6: validate inputs before any state access.
         if (evaluator == address(0)) revert ZeroAddress("evaluator");
@@ -514,7 +580,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         // so there is no external call that could trigger reentrancy back into us.
         protocolToken.burn(amount);
 
-        emit EvaluatorSlashed(evaluator, amount, eval.stakedAmount);
+        emit EvaluatorSlashed(evaluator, jobId, amount, eval.stakedAmount, reason);
     }
 
     // ─── Admin functions ─────────────────────────────────────────────────────
@@ -722,6 +788,50 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      */
     function getEvaluatorCount() external view returns (uint256) {
         return activeEvaluators.length;
+    }
+
+    /**
+     * @notice Stores an off-chain metadata string for the calling evaluator.
+     * @dev Only active evaluators (stake >= minEvaluatorStake) may publish metadata.
+     *      Inactive evaluators are excluded from the selection pool so their metadata
+     *      would be misleading for integrators discovering evaluators off-chain.
+     *      The string is stored as-is — no validation is performed on its content.
+     *      Recommended formats: a URI (IPFS, HTTPS) or an inline JSON blob describing
+     *      the evaluator's capabilities, pricing, and contact information.
+     * @param metadata Arbitrary string to associate with msg.sender's evaluator profile.
+     */
+    function setMetadata(string calldata metadata) external {
+        // CHECKS — only active evaluators may publish metadata.
+        // We reject inactive callers rather than silently storing the string, because
+        // storing metadata for a non-active evaluator could mislead SDKs and UIs that
+        // rely on getMetadata() to discover evaluators without cross-referencing their
+        // active status. Explicit failure surfaces the problem immediately.
+        // FINDING-A01: require warmup period to have passed, not just active flag.
+        // An evaluator who staked recently is active == true but excluded from
+        // assignEvaluator() until warmup elapses. Allowing them to publish metadata
+        // before they are eligible would surface profiles for non-slashable evaluators.
+        Evaluator storage eval = evaluators[msg.sender];
+        uint64 warmupThreshold = uint64(block.timestamp) - warmupPeriod;
+        if (!eval.active || eval.activeSince > warmupThreshold) revert NotActive(msg.sender);
+        // FINDING-A03: enforce a maximum metadata length to bound storage cost.
+        if (bytes(metadata).length > MAX_METADATA_LENGTH) revert MetadataTooLong(bytes(metadata).length, MAX_METADATA_LENGTH);
+        // EFFECTS — write to the separate metadata mapping (does not touch the Evaluator struct)
+        _evaluatorMetadata[msg.sender] = metadata;
+        emit EvaluatorMetadataUpdated(msg.sender, metadata);
+    }
+
+    /**
+     * @notice Returns the metadata string stored by a given evaluator.
+     * @dev Returns an empty string if the evaluator has never called setMetadata().
+     *      Callers should verify the evaluator's active status via isEligible() before
+     *      relying on this metadata for job assignment decisions.
+     * @param evaluator The evaluator address to query.
+     * @return The metadata string stored by the evaluator (may be empty).
+     */
+    function getMetadata(address evaluator) external view returns (string memory) {
+        // FINDING-A02: return empty string for inactive evaluators to prevent stale data.
+        if (!evaluators[evaluator].active) return "";
+        return _evaluatorMetadata[evaluator];
     }
 
     // ─── Internal functions ───────────────────────────────────────────────────
