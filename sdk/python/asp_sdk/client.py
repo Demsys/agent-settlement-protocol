@@ -13,7 +13,7 @@ Usage:
 from __future__ import annotations
 
 import time
-from typing import Optional, Tuple
+from typing import Tuple
 
 import httpx
 
@@ -94,16 +94,25 @@ class ASPClient:
         provider_address: str,
         budget: str,
         deadline_minutes: int = 60,
+        evaluator_address: str | None = None,
     ) -> JobResult:
-        """Open a job on-chain. Synchronous — returns tx hash."""
-        resp = self._http.post(
-            "/v1/jobs",
-            json={
-                "providerAddress": provider_address,
-                "budget": budget,
-                "deadlineMinutes": deadline_minutes,
-            },
-        )
+        """Open a job on-chain. Synchronous — returns tx hash.
+
+        Args:
+            provider_address:   Ethereum address of the provider agent.
+            budget:             Budget in USDC (e.g. "5.00").
+            deadline_minutes:   Job deadline in minutes. Defaults to 60.
+            evaluator_address:  Optional explicit evaluator address (0x…).
+                                Omit to auto-assign from the staker pool.
+        """
+        body: dict = {
+            "providerAddress": provider_address,
+            "budget": budget,
+            "deadlineMinutes": deadline_minutes,
+        }
+        if evaluator_address is not None:
+            body["evaluatorAddress"] = evaluator_address
+        resp = self._http.post("/v1/jobs", json=body)
         _raise_for_status(resp)
         return JobResult.model_validate(resp.json())
 

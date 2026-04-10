@@ -110,15 +110,15 @@ The evaluator is selected automatically from `EvaluatorRegistry` at job creation
 
 ## Deployed Contracts (Base Sepolia)
 
-Deployed on 2026-03-29, governance wired on 2026-04-07. Chain ID: 84532.
+Deployed on 2026-04-10, governance pending 2026-04-12. Chain ID: 84532.
 
 | Contract | Address | Explorer |
 |---|---|---|
-| AgentJobManager | `0xef8b87A6236e7DB4E0967Ed068C8893fD5a5D57f` | [basescan](https://sepolia.basescan.org/address/0xef8b87A6236e7DB4E0967Ed068C8893fD5a5D57f#readContract) |
-| EvaluatorRegistry | `0xE3E7bE158E79f2570e28E566d81e447878b1cF99` | [basescan](https://sepolia.basescan.org/address/0xE3E7bE158E79f2570e28E566d81e447878b1cF99#readContract) |
-| ReputationBridge | `0x5981ac8A970c8757f768B7E02feA7Bd0fCD912e3` | [basescan](https://sepolia.basescan.org/address/0x5981ac8A970c8757f768B7E02feA7Bd0fCD912e3#readContract) |
-| ProtocolToken | `0xa9dD39B2F4c5C76121d8820De8B2eBF4279B76Fc` | [basescan](https://sepolia.basescan.org/address/0xa9dD39B2F4c5C76121d8820De8B2eBF4279B76Fc#readContract) |
-| MockUSDC | `0x21365250F72066AcEBD7D4aE27b6d3910b331c6E` | [basescan](https://sepolia.basescan.org/address/0x21365250F72066AcEBD7D4aE27b6d3910b331c6E#readContract) |
+| AgentJobManager | `0xB8C41C289AA2D55b7A8ae53003F212AcABEcc597` | [basescan](https://sepolia.basescan.org/address/0xB8C41C289AA2D55b7A8ae53003F212AcABEcc597#readContract) |
+| EvaluatorRegistry | `0x454911f476493dcB34273C9c22Ded2CeCec0Dd2c` | [basescan](https://sepolia.basescan.org/address/0x454911f476493dcB34273C9c22Ded2CeCec0Dd2c#readContract) |
+| ReputationBridge | `0x2Fa2eB888e217e095638fa3763322DAcaAac904a` | [basescan](https://sepolia.basescan.org/address/0x2Fa2eB888e217e095638fa3763322DAcaAac904a#readContract) |
+| ProtocolToken | `0x9FC09D3b2ACc67c7F1a2e961e3c5fA32Cc94514A` | [basescan](https://sepolia.basescan.org/address/0x9FC09D3b2ACc67c7F1a2e961e3c5fA32Cc94514A#readContract) |
+| MockUSDC | `0x2334bcfd88644d77531C47adCB07872fbcE40afC` | [basescan](https://sepolia.basescan.org/address/0x2334bcfd88644d77531C47adCB07872fbcE40afC#readContract) |
 
 Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 1 VRT token.
 
@@ -276,7 +276,7 @@ Rate limits: 120 requests / 15 min per IP globally. Agent creation is capped at 
 |---|---|---|---|
 | `POST` | `/v1/agents` | — | Create a new agent and its managed wallet. Returns `agentId`, `address`, `apiKey`. |
 | `GET` | `/v1/agents/:id/balance` | `x-api-key` | Returns current ETH and USDC balances for the agent wallet. |
-| `POST` | `/v1/jobs` | `x-api-key` | Create a job on-chain. Body: `providerAddress`, `budget` (string USDC), `deadlineMinutes`. Synchronous — returns `txHash`. |
+| `POST` | `/v1/jobs` | `x-api-key` | Create a job on-chain. Body: `providerAddress`, `budget` (string USDC), `deadlineMinutes`, `evaluatorAddress` (optional — omit to auto-assign from the staker pool). Synchronous — returns `txHash`. |
 | `GET` | `/v1/jobs` | `x-api-key` | List all jobs belonging to the authenticated agent. |
 | `GET` | `/v1/jobs/:id` | `x-api-key` | Fetch live job state, queried directly from the contract. |
 | `POST` | `/v1/jobs/:id/fund` | `x-api-key` | Mint MockUSDC, approve the contract, call `fund()` on-chain. Returns HTTP 202 — use `watchJob` or poll `GET /v1/jobs/:id` for the final state. |
@@ -304,7 +304,7 @@ Async endpoints (`fund`, `submit`, `complete`) return `{ "jobId": "...", "status
 
 | Method | Returns | Description |
 |---|---|---|
-| `client.createJob(params)` | `JobResult` | Synchronous. Returns `txHash` and `basescanUrl`. |
+| `client.createJob(params)` | `JobResult` | Synchronous. Returns `txHash` and `basescanUrl`. `params.evaluatorAddress` is optional — omit to auto-assign. |
 | `client.fundJob(jobId)` | `AsyncJobResult` | Async (202). Poll with `watchJob`. |
 | `client.submitWork(jobId, deliverable)` | `AsyncJobResult` | Async (202). |
 | `client.completeJob(jobId, reason?)` | `AsyncJobResult` | Async (202). Evaluator only. |

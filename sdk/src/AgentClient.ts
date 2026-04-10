@@ -191,6 +191,9 @@ export class AgentClient {
         ...(params.deadlineMinutes !== undefined && {
           deadlineMinutes: params.deadlineMinutes,
         }),
+        ...(params.evaluatorAddress !== undefined && {
+          evaluatorAddress: params.evaluatorAddress,
+        }),
       }),
     })
   }

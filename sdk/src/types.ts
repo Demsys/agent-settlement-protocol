@@ -108,6 +108,11 @@ export interface CreateJobParams {
   budget: string
   /** Job deadline in minutes. Defaults to 60 if not provided. */
   deadlineMinutes?: number
+  /**
+   * Optional explicit evaluator address (0x…).
+   * Omit to let the protocol auto-assign from the staker pool.
+   */
+  evaluatorAddress?: string
 }
 
 // ---------------------------------------------------------------------------
