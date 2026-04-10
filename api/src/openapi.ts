@@ -174,9 +174,10 @@ export const openApiSpec = {
             type: 'object',
             required: ['providerAddress', 'budget'],
             properties: {
-              providerAddress: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'Provider agent wallet address.' },
-              budget:          { type: 'string', pattern: '^\\d+(\\.\\d+)?$', example: '5.00', description: 'Budget in USDC (0.01–10000).' },
-              deadlineMinutes: { type: 'integer', minimum: 5, maximum: 10080, default: 60, description: 'Job deadline in minutes.' },
+              providerAddress:   { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'Provider agent wallet address.' },
+              evaluatorAddress:  { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'Optional explicit evaluator address. Omit to auto-assign from the registry pool.' },
+              budget:            { type: 'string', pattern: '^\\d+(\\.\\d+)?$', example: '5.00', description: 'Budget in USDC (0.01–10000).' },
+              deadlineMinutes:   { type: 'integer', minimum: 5, maximum: 10080, default: 60, description: 'Job deadline in minutes.' },
             },
           }}},
         },
