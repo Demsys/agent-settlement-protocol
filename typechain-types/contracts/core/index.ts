@@ -6,3 +6,4 @@ export type { agentJobManagerSol };
 import type * as reputationBridgeSol from "./ReputationBridge.sol";
 export type { reputationBridgeSol };
 export type { EvaluatorRegistry } from "./EvaluatorRegistry";
+export type { Treasury } from "./Treasury";

@@ -58,41 +58,50 @@ async function main() {
 
   console.log('\n--- Executing pending governance proposals ---\n')
 
+  const targetJobManager    = manifest.contracts.AgentJobManager.address
+  const targetRepBridge     = manifest.contracts.ReputationBridge.address
+
   // ── 1. EvaluatorRegistry.executeJobManager ──────────────────────────────────
-  try {
-    const tx = await EvaluatorRegistry.executeJobManager(manifest.contracts.AgentJobManager.address)
-    await tx.wait(1)
-    console.log(`  \u2713 executeJobManager — txHash: ${tx.hash}`)
-    console.log(`    EvaluatorRegistry is now wired to AgentJobManager.`)
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('NoProposalPending')) {
-      console.warn('  \u26a0  executeJobManager skipped: no proposal is pending (already executed or not proposed).')
-    } else if (msg.includes('GovernanceDelayNotElapsed')) {
-      console.warn('  \u26a0  executeJobManager skipped: GOVERNANCE_DELAY (2 days) has not elapsed yet. Re-run after the delay.')
-    } else if (msg.includes('ProposalValueMismatch')) {
-      console.warn('  \u26a0  executeJobManager skipped: address mismatch — check manifest for stale data.')
-    } else {
-      throw err
+  const currentJobManager = await EvaluatorRegistry.jobManager()
+  if (currentJobManager.toLowerCase() === targetJobManager.toLowerCase()) {
+    console.log(`  \u2713 executeJobManager already done — EvaluatorRegistry.jobManager = ${currentJobManager}`)
+  } else {
+    try {
+      const tx = await EvaluatorRegistry.executeJobManager(targetJobManager)
+      await tx.wait(1)
+      console.log(`  \u2713 executeJobManager — txHash: ${tx.hash}`)
+      console.log(`    EvaluatorRegistry is now wired to AgentJobManager.`)
+    } catch (err: unknown) {
+      const msg = String(err)
+      if (msg.includes('GovernanceDelayNotElapsed')) {
+        console.warn('  \u26a0  executeJobManager skipped: GOVERNANCE_DELAY (2 days) has not elapsed yet. Re-run after the delay.')
+      } else if (msg.includes('ProposalValueMismatch')) {
+        console.warn('  \u26a0  executeJobManager skipped: address mismatch — check manifest for stale data.')
+      } else {
+        throw err
+      }
     }
   }
 
   // ── 2. AgentJobManager.executeReputationBridge ──────────────────────────────
-  try {
-    const tx = await AgentJobManager.executeReputationBridge(manifest.contracts.ReputationBridge.address)
-    await tx.wait(1)
-    console.log(`  \u2713 executeReputationBridge — txHash: ${tx.hash}`)
-    console.log(`    AgentJobManager is now wired to ReputationBridge.`)
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('NoProposalPending')) {
-      console.warn('  \u26a0  executeReputationBridge skipped: no proposal is pending (already executed or not proposed).')
-    } else if (msg.includes('GovernanceDelayNotElapsed')) {
-      console.warn('  \u26a0  executeReputationBridge skipped: GOVERNANCE_DELAY (2 days) has not elapsed yet. Re-run after the delay.')
-    } else if (msg.includes('ProposalValueMismatch')) {
-      console.warn('  \u26a0  executeReputationBridge skipped: address mismatch — check manifest for stale data.')
-    } else {
-      throw err
+  const currentRepBridge = await AgentJobManager.reputationBridge()
+  if (currentRepBridge.toLowerCase() === targetRepBridge.toLowerCase()) {
+    console.log(`  \u2713 executeReputationBridge already done — AgentJobManager.reputationBridge = ${currentRepBridge}`)
+  } else {
+    try {
+      const tx = await AgentJobManager.executeReputationBridge(targetRepBridge)
+      await tx.wait(1)
+      console.log(`  \u2713 executeReputationBridge — txHash: ${tx.hash}`)
+      console.log(`    AgentJobManager is now wired to ReputationBridge.`)
+    } catch (err: unknown) {
+      const msg = String(err)
+      if (msg.includes('GovernanceDelayNotElapsed')) {
+        console.warn('  \u26a0  executeReputationBridge skipped: GOVERNANCE_DELAY (2 days) has not elapsed yet. Re-run after the delay.')
+      } else if (msg.includes('ProposalValueMismatch')) {
+        console.warn('  \u26a0  executeReputationBridge skipped: address mismatch — check manifest for stale data.')
+      } else {
+        throw err
+      }
     }
   }
 

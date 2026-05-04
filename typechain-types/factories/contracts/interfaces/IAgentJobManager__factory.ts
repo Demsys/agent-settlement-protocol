@@ -215,6 +215,37 @@ const _abi = [
       {
         indexed: true,
         internalType: "address",
+        name: "evaluator",
+        type: "address",
+      },
+      {
+        indexed: false,
+        internalType: "uint256",
+        name: "evaluatorFee",
+        type: "uint256",
+      },
+      {
+        indexed: false,
+        internalType: "uint256",
+        name: "treasuryFee",
+        type: "uint256",
+      },
+    ],
+    name: "FeeDistributed",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        indexed: true,
+        internalType: "address",
         name: "provider",
         type: "address",
       },

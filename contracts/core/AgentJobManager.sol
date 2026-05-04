@@ -40,7 +40,8 @@ interface IReputationBridge {
  *         escrow, submission, evaluation, payment, and expiration.
  * @dev Implements IAgentJobManager with four protocol extensions:
  *      1. Automatic evaluator assignment from EvaluatorRegistry (when evaluator == address(0))
- *      2. Protocol fee hook on complete() — feeRate basis points sent to feeRecipient
+ *      2. Protocol fee hook on complete()/reject() — feeRate basis points split 80/20
+ *         between evaluator (80%) and treasury (20%)
  *      3. Pull-based refunds via pendingRefunds mapping to prevent griefing
  *      4. Optional ReputationBridge integration: complete()/reject() forward outcomes
  *         to IReputationBridge.recordJobOutcome() when reputationBridge != address(0)
@@ -60,7 +61,7 @@ interface IReputationBridge {
  *      - Refunds use Pull over Push to prevent griefing
  *      - Fee rounding always favors the Provider (truncation toward zero)
  *      - Budget is zeroed before any transfer as defense-in-depth against reentrancy
- *      - feeRecipient must be set at construction time — complete() cannot silently
+ *      - treasury must be set at construction time — complete()/reject() cannot silently
  *        burn fees (FINDING-003 fix)
  *
  * @custom:security This contract holds user funds. It has been designed with
@@ -77,16 +78,33 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      Even with full governance compromise, fees cannot exceed 5%.
     uint256 public constant MAX_FEE_RATE = 500;
 
+    /// @notice Share of the protocol fee sent to the assigned evaluator on complete() and reject().
+    /// The remaining (10_000 - EVALUATOR_SHARE_BPS) goes to treasury.
+    /// @dev 8_000 bps = 80%. The evaluator receives 80% of the collected fee as compensation
+    ///      for the gas cost and off-chain evaluation work. The treasury receives the remaining
+    ///      20% for protocol operations (buyback-and-burn via Treasury.buybackAndBurn()).
+    ///      This split is a constant (not governance-adjustable) to simplify the invariant:
+    ///      "evaluators always earn 80% of the fee they generate." Governance controls the
+    ///      total feeRate; the split within the fee is protocol-level, not job-level.
+    uint256 public constant EVALUATOR_SHARE_BPS = 8_000; // 80%
+
     /// @notice Minimum time between job creation and deadline.
     uint64 public constant MIN_DEADLINE_OFFSET = 5 minutes;
 
-    /// @notice Minimum budget to ensure fee calculation is non-zero at maximum fee rate (500 bps).
-    /// @dev At 500 bps, a budget of 10_000 yields a fee of 5 (minimum 1 token unit).
-    ///      This protects against budgets so small that the protocol collects zero fee regardless
-    ///      of feeRate setting. 10_000 = 0.01 USDC (6 decimals).
-    ///      Rounding note: fee = budget * feeRate / 10000. At feeRate=1, budget=9999 → fee=0.
-    ///      MIN_BUDGET ensures fee >= 1 at any valid feeRate (1..500).
-    uint128 public constant MIN_BUDGET = 10_000;
+    /// @notice Minimum budget to ensure the evaluator fee covers gas cost on Base.
+    /// @dev 1_000_000 = 1 USDC (6 decimals). At the current feeRate (100 bps = 1%) and
+    ///      EVALUATOR_SHARE_BPS (8_000 = 80%), a 1 USDC budget yields:
+    ///        fee          = 1_000_000 * 100  / 10_000 = 10_000 (0.01 USDC)
+    ///        evaluatorFee = 10_000    * 8_000 / 10_000 =  8_000 (0.008 USDC)
+    ///      At Base gas prices (~0.001–0.01 gwei) an evaluator tx costs well under $0.001,
+    ///      so 0.008 USDC is a meaningful incentive. This is strictly more conservative than
+    ///      the previous 10_000 (0.01 USDC), which did not account for the evaluator split
+    ///      and risked the evaluator receiving a near-zero fee after the 80/20 division.
+    ///      Rounding note: fee = budget * feeRate / 10_000. Division truncates toward zero,
+    ///      which means the fee (and hence evaluatorFee) always rounds DOWN — favoring the
+    ///      Provider and Client over the protocol. MIN_BUDGET ensures neither the evaluator
+    ///      nor treasury receive zero at any governance-approved feeRate (1..500).
+    uint128 public constant MIN_BUDGET = 1_000_000;
 
     /// @notice Minimum time the Evaluator has to evaluate after a Provider submission.
     /// @dev FINDING #3: prevents the following griefing attack:
@@ -111,7 +129,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      Even if the owner key is compromised, an attacker cannot drain the protocol
     ///      via a fee manipulation in less than 2 days — giving time for an emergency
     ///      multisig rotation or a community response.
-    ///      Applies to: setFeeRate and setFeeRecipient.
+    ///      Applies to: setFeeRate and setTreasury.
     ///      Does NOT apply to: allowToken/disallowToken (maintenance operations, not financial).
     ///      FINDING-001 fix: now also applies to setReputationBridge — a malicious bridge can
     ///      grief evaluator gas on complete()/reject(); the 2-day window allows detection.
@@ -130,23 +148,16 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     ///      Changes go through a propose/execute pattern with GOVERNANCE_DELAY.
     uint256 public feeRate;
 
-    /// @notice Address that receives the protocol fee on complete().
-    /// @dev Validated non-zero at construction (FINDING-003). The ProtocolToken
-    ///      then handles burn (50%) and staker distribution (50%).
+    /// @notice Address of the Treasury contract that receives the protocol's share of fees.
+    /// @dev Validated non-zero at construction (FINDING-003). The Treasury contract
+    ///      accumulates USDC and governance calls buybackAndBurn() to convert to VRT.
     ///      Changes go through a propose/execute pattern with GOVERNANCE_DELAY.
-    address public feeRecipient;
+    address public treasury;
 
     /// @notice Address of the ReputationBridge contract to notify on job settlement.
     /// @dev Optional: when address(0), reputation forwarding is silently skipped.
     ///      Set via setReputationBridge(). Can be reset to address(0) to disable.
     address public reputationBridge;
-
-    /// @notice When true, the client and provider may be the same address.
-    /// @dev AUDIT-H1: disabled by default to prevent reputation farming via self-dealing
-    ///      (cycling funds to artificially inflate ERC-8004 scores without real work).
-    ///      Enable only for controlled single-agent MVP deployments where both roles
-    ///      are intentionally held by the same wallet. MUST be false on mainnet production.
-    bool public selfServiceEnabled;
 
     /// @notice Auto-incrementing job ID counter. Starts at 1 (0 is reserved as "no job").
     uint256 private nextJobId;
@@ -165,7 +176,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice Pending governance changes keyed by a parameter identifier.
     /// @dev The key is a keccak256 hash of the parameter name string (e.g. keccak256("feeRate")).
     ///      This avoids collisions between different parameters without needing separate mappings.
-    ///      FINDING-005: only feeRate and feeRecipient are timelocked here; they are the only
+    ///      FINDING-005: only feeRate and treasury are timelocked here; they are the only
     ///      parameters whose change directly controls the flow of funds.
     struct PendingChange {
         bytes32 valueHash;    // keccak256(abi.encode(newValue)) — verified at execution time
@@ -201,11 +212,11 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice Emitted when a pending feeRate change is executed after the delay.
     event FeeRateUpdated(uint256 oldFeeRate, uint256 newFeeRate);
 
-    /// @notice Emitted when a feeRecipient change is proposed, before the delay elapses.
-    event FeeRecipientProposed(address indexed newFeeRecipient, uint256 executableAt);
+    /// @notice Emitted when a treasury address change is proposed, before the delay elapses.
+    event TreasuryProposed(address indexed newTreasury, uint256 executableAt);
 
-    /// @notice Emitted when a pending feeRecipient change is executed after the delay.
-    event FeeRecipientUpdated(address indexed oldFeeRecipient, address indexed newFeeRecipient);
+    /// @notice Emitted when a pending treasury address change is executed after the delay.
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
 
     /// @notice Emitted when any pending governance proposal is cancelled by the owner.
     event ProposalCancelled(bytes32 indexed key);
@@ -218,12 +229,19 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @notice Emitted when a token is removed from the payment whitelist.
     event TokenDisallowed(address indexed token);
 
+    // FeeDistributed is declared in IAgentJobManager and inherited — not redeclared here.
+    // Emitted on complete() and reject() when fee > 0 (evaluatorFee + treasuryFee == fee).
+
+    /// @notice Emitted in fund() when an evaluator is auto-assigned from EvaluatorRegistry.
+    /// @dev Mirrors EvaluatorRegistry.EvaluatorAssigned so that listeners watching only
+    ///      AgentJobManager events receive the full job lifecycle without needing to also
+    ///      subscribe to EvaluatorRegistry. Emitted only on the auto-assignment path
+    ///      (job.evaluator == address(0) at fund() entry). Agreed on forum ERC-8183, 2026-04-13.
+    event EvaluatorAssigned(uint256 indexed jobId, address indexed evaluator);
+
     // DeadlineExtended is declared in IAgentJobManager and inherited — not redeclared here.
     // It is emitted by both extendDeadline() (voluntary, client-initiated) and
     // submit() (automatic, when less than MIN_EVALUATION_WINDOW remains before deadline).
-
-    /// @notice Emitted when the self-service mode is toggled by the owner.
-    event SelfServiceToggled(bool enabled);
 
     /**
      * @notice Emitted when a Client reopens a Rejected job for a new execution attempt.
@@ -328,12 +346,12 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
     /**
      * @notice Deploys the AgentJobManager with initial configuration.
-     * @dev FINDING-003 fix: _feeRecipient is now a required constructor parameter.
+     * @dev FINDING-003 fix: _treasury is now a required constructor parameter.
      *      Requiring it at construction prevents the contract from being deployed
-     *      in a state where complete() would revert with a non-obvious SafeERC20
-     *      error, permanently trapping funds of Submitted jobs.
-     *      The timelocked setters (proposeFeeRate/executeFeeRate, proposeFeeRecipient/
-     *      executeFeeRecipient) are kept for governance rotation.
+     *      in a state where complete()/reject() would revert with a non-obvious SafeERC20
+     *      error, permanently trapping funds of Submitted/Funded jobs.
+     *      The timelocked setters (proposeFeeRate/executeFeeRate, proposeTreasury/
+     *      executeTreasury) are kept for governance rotation.
      *
      *      FINDING-007 fix: _initialAllowedTokens bootstraps the token whitelist at
      *      deployment. Without this parameter, no token would be whitelisted at
@@ -348,8 +366,8 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      *      reputation recording is enabled.
      * @param _evaluatorRegistry      Address of the deployed EvaluatorRegistry contract.
      * @param _feeRate                Initial fee rate in basis points (100 = 1%).
-     * @param _feeRecipient           Address that receives the protocol fee on complete().
-     *                                Must be non-zero. Typically the ProtocolToken address.
+     * @param _treasury               Address of the Treasury contract that receives the
+     *                                protocol's share of fees. Must be non-zero.
      * @param _reputationBridge       Address of the ReputationBridge contract, or address(0)
      *                                to disable reputation forwarding at deployment.
      * @param _initialAllowedTokens   List of ERC-20 addresses to whitelist at deployment.
@@ -358,16 +376,16 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     constructor(
         address   _evaluatorRegistry,
         uint256   _feeRate,
-        address   _feeRecipient,
+        address   _treasury,
         address   _reputationBridge,
         address[] memory _initialAllowedTokens
     ) Ownable(msg.sender) {
         if (_evaluatorRegistry == address(0)) revert ZeroAddress("evaluatorRegistry");
         if (_feeRate > MAX_FEE_RATE) revert FeeRateExceedsMaximum(_feeRate, MAX_FEE_RATE);
-        // FINDING-003: feeRecipient must be set at deployment. If address(0) were
+        // FINDING-003: treasury must be set at deployment. If address(0) were
         // accepted, any job reaching Submitted state with feeRate > 0 would have its
         // funds permanently locked — complete() would revert on safeTransfer(address(0)).
-        if (_feeRecipient == address(0)) revert ZeroAddress("feeRecipient");
+        if (_treasury == address(0)) revert ZeroAddress("treasury");
         // _reputationBridge may be address(0) — reputation forwarding is optional.
         // No zero-check here is intentional: the bridge is an augmentation, not a
         // safety-critical dependency. complete() and reject() skip the bridge call
@@ -375,9 +393,14 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
 
         evaluatorRegistry = EvaluatorRegistry(_evaluatorRegistry);
         feeRate = _feeRate;
-        feeRecipient = _feeRecipient;
+        treasury = _treasury;
         reputationBridge = _reputationBridge;
         nextJobId = 1; // Start at 1 so that jobId 0 is always "invalid"
+
+        // Emit initial feeRate so indexers don't need a storage read at deployment.
+        // This mirrors the event emitted by executeFeeRate() for governance changes,
+        // giving indexers a uniform stream of FeeRateUpdated events from genesis.
+        emit FeeRateUpdated(0, _feeRate);
 
         if (_reputationBridge != address(0)) {
             emit ReputationBridgeUpdated(address(0), _reputationBridge);
@@ -426,11 +449,11 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // which would prevent complete() from transferring the full agreed amount.
         if (!allowedTokens[token]) revert TokenNotAllowed(token);
 
-        // AUDIT-H1: by default, block client == provider to prevent reputation farming
-        // (self-dealing to inflate ERC-8004 scores without real counterparty work).
-        // selfServiceEnabled can be set to true by the owner for single-agent MVP deployments
-        // where both roles are intentionally held by the same wallet.
-        if (!selfServiceEnabled && provider == msg.sender) revert SelfAssignment("provider");
+        // AUDIT-H1: client == provider is unconditionally forbidden to prevent reputation
+        // farming (self-dealing to inflate ERC-8004 scores without real counterparty work).
+        // The previous opt-in selfServiceEnabled bypass has been removed: the security
+        // invariant must hold on all deployments, not just mainnet production.
+        if (provider == msg.sender) revert SelfAssignment("provider");
 
         // The client cannot be their own evaluator — would allow self-approval of work.
         // address(0) is allowed here (auto-assignment path).
@@ -496,13 +519,12 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             revert NotAuthorized(msg.sender, jobId, "client or provider");
         }
 
-        // FINDING #4: enforce minimum budget so that fee calculation is non-zero at any valid
-        // feeRate. At feeRate=1 (0.01%), budget=9999 → fee = 9999*1/10000 = 0 (integer truncation).
-        // The protocol would settle a job for free. MIN_BUDGET = 10_000 ensures fee >= 1 at
-        // all governance-approved feeRates (1..500). Rounding always favors the provider
-        // (truncation toward zero), so the minimum is also provider-friendly.
-        // We choose the stricter check (BudgetBelowMinimum revert) over silently clamping the
-        // amount to MIN_BUDGET — silent clamping would mislead the client about their actual commitment.
+        // Enforce minimum budget so that the evaluator fee is economically meaningful.
+        // MIN_BUDGET = 1_000_000 (1 USDC, 6 decimals) ensures that at any valid feeRate
+        // (1..500) and EVALUATOR_SHARE_BPS (8_000), the evaluator receives a non-zero
+        // incentive that covers their gas cost on Base. See MIN_BUDGET constant for the
+        // full derivation. We choose the stricter revert over silently clamping to MIN_BUDGET
+        // — silent clamping would mislead the client about their actual commitment.
         if (amount < MIN_BUDGET) revert BudgetBelowMinimum(amount, MIN_BUDGET);
 
         // EFFECTS
@@ -550,6 +572,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             // provider and client are passed so the registry can enforce independence via
             // its re-draw loop (MAX_ASSIGNMENT_RETRIES attempts).
             job.evaluator = evaluatorRegistry.assignEvaluator(jobId, job.provider, job.client);
+            emit EvaluatorAssigned(jobId, job.evaluator);
         }
 
         // Post-assignment independence check: evaluator must not be provider or client.
@@ -632,13 +655,17 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      * @dev CEI pattern strictly enforced:
      *      (1) Checks: status == Submitted, msg.sender == evaluator
      *      (2) Effects: status = Completed, budget = 0, compute fee split
-     *      (3) Interactions: safeTransfer to provider, safeTransfer to feeRecipient,
-     *          then optional call to ReputationBridge
-     *      Fee calculation: fee = budget * feeRate / 10000
-     *      Rounding: integer division truncates toward zero, so the fee is rounded DOWN.
-     *      This means the Provider always receives at least (budget - theoreticalFee),
+     *      (3) Interactions: safeTransfer to provider, safeTransfer to treasury (20% of fee),
+     *          safeTransfer to evaluator (80% of fee), then optional call to ReputationBridge
+     *          (treasury is transferred first — it is a trusted contract; evaluator is external)
+     *      Fee calculation: fee = budget * feeRate / 10_000
+     *      Fee split: evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000 (80%)
+     *                 treasuryFee  = fee - evaluatorFee (20%, gets rounding remainder)
+     *      Rounding: fee and evaluatorFee both truncate toward zero. treasuryFee = fee - evaluatorFee
+     *      never underflows. The Provider always receives at least (budget - theoreticalFee),
      *      favoring the Provider over the protocol on rounding edge cases.
-     *      If feeRate == 0 or fee rounds to 0, no transfer to feeRecipient occurs.
+     *      If feeRate == 0 or fee rounds to 0, no fee transfers occur and FeeDistributed is
+     *      not emitted (both evaluatorFee and treasuryFee are 0).
      *      ReputationBridge call (FINDING-002 fix): if reputationBridge != address(0),
      *      calls IReputationBridge.recordJobOutcome() with completed=true AFTER all
      *      token transfers. The call is conditional — a zero bridge address is silently
@@ -675,10 +702,27 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // INTERACTIONS — transfers happen last, after all state is finalized
         IERC20(token).safeTransfer(provider, payment);
 
-        // Only transfer fee if there is something to transfer.
-        // feeRecipient is guaranteed non-zero by the constructor (FINDING-003).
+        // Split the fee between the evaluator (80%) and the treasury (20%).
+        // evaluatorFee truncates toward zero; treasuryFee absorbs the rounding remainder
+        // so that evaluatorFee + treasuryFee == fee exactly (no dust left in the contract).
+        // Both treasury and job.evaluator are guaranteed non-zero by the constructor and
+        // the fund() assignment step respectively (FINDING-003).
+        uint256 evaluatorFee = 0;
+        uint256 treasuryFee  = 0;
         if (fee > 0) {
-            IERC20(token).safeTransfer(feeRecipient, fee);
+            evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000;
+            treasuryFee  = fee - evaluatorFee;
+            // Security: treasury is transferred BEFORE evaluator.
+            // Treasury is a governance-controlled trusted contract; evaluator is an external
+            // address that could be a malicious contract. Transferring to the trusted address
+            // first ensures all protocol-side state is settled before the potentially hostile
+            // address receives tokens. (FINDING-001)
+            if (treasuryFee  > 0) IERC20(token).safeTransfer(treasury, treasuryFee);
+            // FINDING-002: use the locally cached `evaluator` variable, not `job.evaluator`.
+            // The local is captured before `job.budget = 0` and any state mutation above, so
+            // this read is safe and avoids a storage re-read after the slot has been modified.
+            if (evaluatorFee > 0) IERC20(token).safeTransfer(evaluator, evaluatorFee);
+            emit FeeDistributed(jobId, evaluator, evaluatorFee, treasuryFee);
         }
 
         emit JobCompleted(jobId, provider, payment, fee);
@@ -747,25 +791,65 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             revert InvalidJobStatus(jobId, current);
         }
 
-        // EFFECTS — update state before registering the refund
+        // EFFECTS — update state before any token transfer (CEI)
         // Minimize local variables to avoid stack-too-deep: read from job storage directly
         // when values are only needed once, and reuse the job reference for the bridge call.
-        address client = job.client;
-        address token  = job.token;
-        uint256 budget = job.budget;
+        address client    = job.client;
+        address token     = job.token;
+        address evaluator = job.evaluator;
+        uint256 budget    = job.budget;
         // Capture whether an evaluator was involved BEFORE zeroing state.
-        // An Open rejection has no evaluator verdict — no reputation signal should fire.
+        // An Open rejection has no evaluator verdict — no fee is charged, no reputation signal fires.
         bool evaluatorInvolved = (current == JobStatus.Funded || current == JobStatus.Submitted);
 
         job.status = JobStatus.Rejected;
-        job.budget = 0;  // Zero budget before registering refund (CEI, defense-in-depth)
+        job.budget = 0;  // Zero budget BEFORE any transfer (CEI, defense-in-depth against reentrancy)
         job.reason = reason;
 
-        // Register refund in the Pull-over-Push pattern.
-        // For Open state, budget is 0 — no tokens to refund, but the event is still emitted.
-        if (budget > 0) {
-            pendingRefunds[client][token] += budget;
-            emit RefundPending(client, token, budget);
+        // Compute fee split (only when an evaluator is involved and budget > 0).
+        // For Open state rejections (Client cancel): budget == 0, no fee applies.
+        // Fee calculation mirrors complete(): multiply before dividing (Pattern 6),
+        // rounding down (truncation toward zero) to favor the Client over the protocol.
+        // The fee is deducted from the budget; only the net amount is refunded to the Client.
+        uint256 fee          = 0;
+        uint256 evaluatorFee = 0;
+        uint256 treasuryFee  = 0;
+        uint256 clientRefund = budget;
+
+        if (evaluatorInvolved && budget > 0) {
+            // The evaluator earns their share even on rejection — they performed the evaluation.
+            // Charging a fee on rejection aligns incentives: evaluators are compensated for work,
+            // not just for approvals. Clients bear the full cost of a job that was rejected after
+            // evaluation, incentivizing them to define clear acceptance criteria upfront.
+            fee          = budget * feeRate / 10_000;
+            evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000;
+            treasuryFee  = fee - evaluatorFee;
+            clientRefund = budget - fee;
+        }
+
+        // Register the net refund in the Pull-over-Push pattern.
+        // clientRefund may be less than budget when a fee is charged (Funded/Submitted state).
+        // For Open state, budget == 0 and clientRefund == 0 — event still emitted for lifecycle.
+        if (clientRefund > 0) {
+            pendingRefunds[client][token] += clientRefund;
+            emit RefundPending(client, token, clientRefund);
+        }
+
+        // INTERACTIONS — token transfers strictly AFTER all state changes
+        // Emit FeeDistributed before JobRejected so indexers see the full fee split atomically
+        // with the state change event.
+        if (fee > 0) {
+            // Security: treasury is transferred BEFORE evaluator.
+            // Treasury is a governance-controlled trusted contract; evaluator is an external
+            // address that could be a malicious contract. Transferring to the trusted address
+            // first ensures all protocol-side state is settled before the potentially hostile
+            // address receives tokens. (FINDING-001)
+            if (treasuryFee  > 0) IERC20(token).safeTransfer(treasury, treasuryFee);
+            // FINDING-002: use the locally cached `evaluator` variable, not `job.evaluator`.
+            // The local is captured before `job.budget = 0` and any state mutation above, so
+            // this read is safe and avoids a storage re-read after the slot has been modified.
+            if (evaluatorFee > 0) IERC20(token).safeTransfer(evaluator, evaluatorFee);
+            emit FeeDistributed(jobId, evaluator, evaluatorFee, treasuryFee);
         }
 
         emit JobRejected(jobId, client, reason);
@@ -773,8 +857,9 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // FINDING-002 fix: forward the negative outcome to ReputationBridge if configured.
         // Only fires when the Evaluator was involved (Funded/Submitted states).
         // Open cancellations by the Client do not generate a reputation signal.
-        // Read provider and evaluator from storage here (not captured earlier) to keep
-        // the local variable count below the stack-too-deep threshold.
+        // FINDING-002: use locally cached `provider` and `evaluator` variables rather than
+        // reading job.provider / job.evaluator from storage after state mutation. Both were
+        // captured in the EFFECTS section, before job.budget was zeroed, and remain valid here.
         // FINDING-006 fix: wrapped in try/catch so that a buggy or malicious bridge contract
         // can never block settlement. Funds are always safe regardless of bridge state.
         address bridge = reputationBridge;
@@ -783,7 +868,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             try IReputationBridge(bridge).recordJobOutcome{gas: 350_000}(
                 jobId,
                 job.provider,   // read from storage — job ref is still valid
-                job.evaluator,  // read from storage — job ref is still valid
+                evaluator,      // FINDING-002: use local cache, not job.evaluator
                 false,
                 reason
             ) {} catch {}
@@ -999,10 +1084,10 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         // newProvider must be a real address.
         if (newProvider == address(0)) revert ZeroAddress("newProvider");
 
-        // The Client cannot be their own Provider unless selfServiceEnabled — same invariant as createJob.
-        // AUDIT-NEW-06: align reopen() with createJob() so that selfServiceEnabled=true workflows
-        // are not blocked at reopen() time while being allowed at createJob() time.
-        if (!selfServiceEnabled && newProvider == job.client) revert SelfAssignment("newProvider");
+        // The Client cannot be their own Provider — same invariant as createJob, now unconditional.
+        // AUDIT-NEW-06 / AUDIT-H1: selfServiceEnabled has been removed; the separation of
+        // client and provider roles is enforced without exception on all deployments.
+        if (newProvider == job.client) revert SelfAssignment("newProvider");
 
         // AUDIT-H2: the previous evaluator who rejected this job cannot become the new
         // provider. An evaluator who rejected has already demonstrated adversarial
@@ -1092,45 +1177,46 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         emit FeeRateUpdated(oldFeeRate, newFeeRate);
     }
 
-    // ── Governance timelock: feeRecipient ─────────────────────────────────────
+    // ── Governance timelock: treasury ─────────────────────────────────────────
 
     /**
-     * @notice Step 1 of 2 — proposes a new fee recipient.  Actual update is delayed by GOVERNANCE_DELAY.
-     * @dev FINDING-005: same rationale as proposeFeeRate. Changing the fee recipient is
+     * @notice Step 1 of 2 — proposes a new treasury address. Actual update is delayed by GOVERNANCE_DELAY.
+     * @dev FINDING-005: same rationale as proposeFeeRate. Changing the treasury address is
      *      a high-impact action: a malicious rotation would redirect all future protocol
-     *      revenue to an attacker-controlled address. The 2-day delay makes this visible
-     *      on-chain before it takes effect.
-     * @param newFeeRecipient Proposed address to receive protocol fees. Must be non-zero.
+     *      revenue (treasury's 20% share of fees) to an attacker-controlled address.
+     *      The 2-day delay makes the proposal visible on-chain before it takes effect.
+     * @param newTreasury Proposed Treasury contract address. Must be non-zero.
      */
-    function proposeFeeRecipient(address newFeeRecipient) external onlyOwner {
-        if (newFeeRecipient == address(0)) revert ZeroAddress("feeRecipient");
+    function proposeTreasury(address newTreasury) external onlyOwner {
+        if (newTreasury == address(0)) revert ZeroAddress("treasury");
 
-        bytes32 key = keccak256("feeRecipient");
+        bytes32 key = keccak256("treasury");
         uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
         pendingChanges[key] = PendingChange({
-            valueHash:    keccak256(abi.encode(newFeeRecipient)),
+            valueHash:    keccak256(abi.encode(newTreasury)),
             executableAt: executableAt
         });
-        emit FeeRecipientProposed(newFeeRecipient, executableAt);
+        emit TreasuryProposed(newTreasury, executableAt);
     }
 
     /**
-     * @notice Step 2 of 2 — executes a previously proposed fee recipient change.
-     * @dev The caller must pass the same newFeeRecipient that was proposed.
-     * @param newFeeRecipient Must match the value passed to the corresponding proposeFeeRecipient().
+     * @notice Step 2 of 2 — executes a previously proposed treasury address change.
+     * @dev The caller must pass the same newTreasury that was proposed.
+     *      The hash check prevents last-second substitution attacks.
+     * @param newTreasury Must match the address passed to the corresponding proposeTreasury().
      */
-    function executeFeeRecipient(address newFeeRecipient) external onlyOwner {
-        bytes32 key = keccak256("feeRecipient");
+    function executeTreasury(address newTreasury) external onlyOwner {
+        bytes32 key = keccak256("treasury");
         PendingChange storage p = pendingChanges[key];
 
         if (p.executableAt == 0) revert NoProposalPending(key);
         if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
-        if (p.valueHash != keccak256(abi.encode(newFeeRecipient))) revert ProposalValueMismatch();
+        if (p.valueHash != keccak256(abi.encode(newTreasury))) revert ProposalValueMismatch();
 
         delete pendingChanges[key]; // CEI: clear before applying the change
-        address oldFeeRecipient = feeRecipient;
-        feeRecipient = newFeeRecipient;
-        emit FeeRecipientUpdated(oldFeeRecipient, newFeeRecipient);
+        address oldTreasury = treasury;
+        treasury = newTreasury;
+        emit TreasuryUpdated(oldTreasury, newTreasury);
     }
 
     // ── Governance: proposal cancellation ────────────────────────────────────
@@ -1149,19 +1235,6 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         if (pendingChanges[key].executableAt == 0) revert NoProposalPending(key);
         delete pendingChanges[key];
         emit ProposalCancelled(key);
-    }
-
-    // ── Self-service mode ─────────────────────────────────────────────────────
-
-    /**
-     * @notice Enables or disables self-service mode (client == provider allowed).
-     * @dev AUDIT-H1: disabled by default to prevent reputation farming.
-     *      Enable for single-agent MVP deployments only. Set to false on mainnet.
-     * @param enabled True to allow client == provider, false to enforce separation.
-     */
-    function setSelfServiceEnabled(bool enabled) external onlyOwner {
-        selfServiceEnabled = enabled;
-        emit SelfServiceToggled(enabled);
     }
 
     // ── Token whitelist management ────────────────────────────────────────────

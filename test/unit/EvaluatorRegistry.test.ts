@@ -144,6 +144,17 @@ describe("EvaluatorRegistry", function () {
         .to.emit(registry, "Staked")
         .withArgs(evaluatorA.address, MIN_STAKE, MIN_STAKE);
     });
+
+    it("should emit EvaluatorStakeUpdated after stake", async function () {
+      const { registry, protocolToken, evaluatorA } = await loadFixture(deployFixture);
+
+      await protocolToken.connect(evaluatorA).approve(await registry.getAddress(), MIN_STAKE);
+
+      // oldBalance = 0 (no prior stake), newBalance = MIN_STAKE
+      await expect(registry.connect(evaluatorA).stake(MIN_STAKE))
+        .to.emit(registry, "EvaluatorStakeUpdated")
+        .withArgs(evaluatorA.address, 0n, MIN_STAKE);
+    });
   });
 
   // ── unstake ────────────────────────────────────────────────────────────────
@@ -223,6 +234,18 @@ describe("EvaluatorRegistry", function () {
 
       expect(after - before).to.equal(ABOVE_MIN);
     });
+
+    it("should emit EvaluatorStakeUpdated after unstake", async function () {
+      const { registry, evaluatorA } = await loadFixture(stakedFixture);
+
+      const unstakeAmount = ethers.parseEther("50");
+      const expectedNewBalance = ABOVE_MIN - unstakeAmount;
+
+      // oldBalance = ABOVE_MIN, newBalance = ABOVE_MIN - unstakeAmount
+      await expect(registry.connect(evaluatorA).unstake(unstakeAmount))
+        .to.emit(registry, "EvaluatorStakeUpdated")
+        .withArgs(evaluatorA.address, ABOVE_MIN, expectedNewBalance);
+    });
   });
 
   // ── warmup period ──────────────────────────────────────────────────────────
@@ -244,13 +267,15 @@ describe("EvaluatorRegistry", function () {
       const { registry, manager } = await loadFixture(activeButColdFixture);
 
       // Impersonate the job manager to call assignEvaluator directly on the same registry instance.
+      // assignEvaluator is now view — use staticCall to avoid "cannot send transaction for view" error.
+      // We pass ZeroAddress for provider and client since no exclusion is needed in this test.
       const managerAddr = await manager.getAddress();
       await ethers.provider.send("hardhat_impersonateAccount", [managerAddr]);
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
       await expect(
-        registry.connect(managerSigner).assignEvaluator(1n)
+        registry.connect(managerSigner).assignEvaluator(1n, ethers.ZeroAddress, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
@@ -258,7 +283,7 @@ describe("EvaluatorRegistry", function () {
 
     it("should assign an evaluator after the warmup period has elapsed", async function () {
       const base = await loadFixture(activeButColdFixture);
-      const { registry, manager } = base;
+      const { registry, manager, evaluatorA } = base;
 
       await time.increase(WARMUP_PERIOD + 1);
 
@@ -267,8 +292,12 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).assignEvaluator(1n))
-        .to.emit(registry, "EvaluatorAssigned");
+      // assignEvaluator is now view — verify it returns the expected evaluator address.
+      // EvaluatorAssigned is now emitted by AgentJobManager.fund(), not by the registry.
+      const assigned = await registry.connect(managerSigner).assignEvaluator(
+        1n, ethers.ZeroAddress, ethers.ZeroAddress
+      );
+      expect(assigned).to.equal(evaluatorA.address);
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });
@@ -291,8 +320,9 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).assignEvaluator(1n))
-        .to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
+      await expect(
+        registry.connect(managerSigner).assignEvaluator(1n, ethers.ZeroAddress, ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });
@@ -321,21 +351,11 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      const tx = await registry.connect(managerSigner).assignEvaluator(1n);
-      const receipt = await tx.wait();
-
-      // Parse the EvaluatorAssigned event
-      const iface = registry.interface;
-      let assigned: string | undefined;
-      for (const log of receipt!.logs) {
-        try {
-          const parsed = iface.parseLog(log);
-          if (parsed?.name === "EvaluatorAssigned") {
-            assigned = parsed.args.evaluator as string;
-          }
-        } catch {}
-      }
-
+      // assignEvaluator is now view — call it statically and verify the returned address.
+      // EvaluatorAssigned is now emitted by AgentJobManager.fund(), not by the registry.
+      const assigned = await registry.connect(managerSigner).assignEvaluator(
+        1n, ethers.ZeroAddress, ethers.ZeroAddress
+      );
       expect(assigned).to.equal(evaluatorA.address);
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
@@ -349,8 +369,9 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).assignEvaluator(1n))
-        .to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
+      await expect(
+        registry.connect(managerSigner).assignEvaluator(1n, ethers.ZeroAddress, ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });
@@ -367,8 +388,9 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).assignEvaluator(1n))
-        .to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
+      await expect(
+        registry.connect(managerSigner).assignEvaluator(1n, ethers.ZeroAddress, ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(registry, "NoEligibleEvaluators");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });
@@ -376,12 +398,14 @@ describe("EvaluatorRegistry", function () {
     it("should revert with OnlyJobManager when called by a non-manager address", async function () {
       const { registry, stranger } = await loadFixture(deployFixture);
 
-      await expect(registry.connect(stranger).assignEvaluator(1n))
+      await expect(
+        registry.connect(stranger).assignEvaluator(1n, ethers.ZeroAddress, ethers.ZeroAddress)
+      )
         .to.be.revertedWithCustomError(registry, "OnlyJobManager")
         .withArgs(stranger.address);
     });
 
-    it("should emit EvaluatorAssigned", async function () {
+    it("should return the evaluator address (EvaluatorAssigned is now emitted by AgentJobManager.fund)", async function () {
       const { registry, manager, evaluatorA } = await loadFixture(warmedUpFixture);
 
       const managerAddr = await manager.getAddress();
@@ -389,9 +413,11 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).assignEvaluator(1n))
-        .to.emit(registry, "EvaluatorAssigned")
-        .withArgs(1n, evaluatorA.address);
+      // assignEvaluator is now view — verify the returned address rather than an event.
+      const assigned = await registry.connect(managerSigner).assignEvaluator(
+        1n, ethers.ZeroAddress, ethers.ZeroAddress
+      );
+      expect(assigned).to.equal(evaluatorA.address);
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });
@@ -423,7 +449,7 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await registry.connect(managerSigner).slash(evaluatorA.address, slashAmount);
+      await registry.connect(managerSigner).slash(evaluatorA.address, slashAmount, 1n, ethers.ZeroHash);
 
       expect(await registry.getStake(evaluatorA.address)).to.equal(ABOVE_MIN - slashAmount);
       expect(await registry.isEligible(evaluatorA.address)).to.be.true;
@@ -442,7 +468,7 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await registry.connect(managerSigner).slash(evaluatorA.address, slashAmount);
+      await registry.connect(managerSigner).slash(evaluatorA.address, slashAmount, 1n, ethers.ZeroHash);
 
       expect(await registry.isEligible(evaluatorA.address)).to.be.false;
       expect(await registry.getEvaluatorCount()).to.equal(0);
@@ -460,7 +486,9 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).slash(evaluatorA.address, tooMuch))
+      await expect(
+        registry.connect(managerSigner).slash(evaluatorA.address, tooMuch, 1n, ethers.ZeroHash)
+      )
         .to.be.revertedWithCustomError(registry, "SlashExceedsStake")
         .withArgs(tooMuch, ABOVE_MIN);
 
@@ -470,7 +498,9 @@ describe("EvaluatorRegistry", function () {
     it("should revert with OnlyJobManager when called by a non-manager", async function () {
       const { registry, evaluatorA, stranger } = await loadFixture(warmedUpStakedFixture);
 
-      await expect(registry.connect(stranger).slash(evaluatorA.address, ethers.parseEther("10")))
+      await expect(
+        registry.connect(stranger).slash(evaluatorA.address, ethers.parseEther("10"), 1n, ethers.ZeroHash)
+      )
         .to.be.revertedWithCustomError(registry, "OnlyJobManager")
         .withArgs(stranger.address);
     });
@@ -486,7 +516,7 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await registry.connect(managerSigner).slash(evaluatorA.address, slashAmount);
+      await registry.connect(managerSigner).slash(evaluatorA.address, slashAmount, 1n, ethers.ZeroHash);
 
       const supplyAfter = await protocolToken.totalSupply();
       expect(supplyBefore - supplyAfter).to.equal(slashAmount);
@@ -494,20 +524,45 @@ describe("EvaluatorRegistry", function () {
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });
 
-    it("should emit EvaluatorSlashed with correct remaining stake", async function () {
+    it("should emit EvaluatorSlashed with evaluator, jobId, amount, and reason", async function () {
       const { registry, manager, evaluatorA } = await loadFixture(warmedUpStakedFixture);
 
       const slashAmount = ethers.parseEther("50");
-      const expectedRemaining = ABOVE_MIN - slashAmount;
+      const jobId = 1n;
+      const reason = ethers.ZeroHash;
 
       const managerAddr = await manager.getAddress();
       await ethers.provider.send("hardhat_impersonateAccount", [managerAddr]);
       await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
       const managerSigner = await ethers.getSigner(managerAddr);
 
-      await expect(registry.connect(managerSigner).slash(evaluatorA.address, slashAmount))
+      // remainingStake was removed from EvaluatorSlashed in the interface update.
+      // The new signature is: EvaluatorSlashed(address evaluator, uint256 jobId, uint256 amount, bytes32 reason)
+      await expect(
+        registry.connect(managerSigner).slash(evaluatorA.address, slashAmount, jobId, reason)
+      )
         .to.emit(registry, "EvaluatorSlashed")
-        .withArgs(evaluatorA.address, slashAmount, expectedRemaining);
+        .withArgs(evaluatorA.address, jobId, slashAmount, reason);
+
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
+    });
+
+    it("should emit EvaluatorStakeUpdated after slash", async function () {
+      const { registry, manager, evaluatorA } = await loadFixture(warmedUpStakedFixture);
+
+      const slashAmount = ethers.parseEther("50");
+      const expectedNewBalance = ABOVE_MIN - slashAmount;
+
+      const managerAddr = await manager.getAddress();
+      await ethers.provider.send("hardhat_impersonateAccount", [managerAddr]);
+      await ethers.provider.send("hardhat_setBalance", [managerAddr, "0x56BC75E2D63100000"]);
+      const managerSigner = await ethers.getSigner(managerAddr);
+
+      await expect(
+        registry.connect(managerSigner).slash(evaluatorA.address, slashAmount, 1n, ethers.ZeroHash)
+      )
+        .to.emit(registry, "EvaluatorStakeUpdated")
+        .withArgs(evaluatorA.address, ABOVE_MIN, expectedNewBalance);
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [managerAddr]);
     });

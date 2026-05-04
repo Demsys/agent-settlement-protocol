@@ -60,9 +60,9 @@ export interface EvaluatorRegistryInterface extends Interface {
 
   getEvent(
     nameOrSignatureOrTopic:
-      | "EvaluatorAssigned"
       | "EvaluatorMetadataUpdated"
       | "EvaluatorSlashed"
+      | "EvaluatorStakeUpdated"
       | "JobManagerProposed"
       | "JobManagerUpdated"
       | "MinEvaluatorStakeUpdated"
@@ -289,19 +289,6 @@ export interface EvaluatorRegistryInterface extends Interface {
   ): Result;
 }
 
-export namespace EvaluatorAssignedEvent {
-  export type InputTuple = [jobId: BigNumberish, evaluator: AddressLike];
-  export type OutputTuple = [jobId: bigint, evaluator: string];
-  export interface OutputObject {
-    jobId: bigint;
-    evaluator: string;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
 export namespace EvaluatorMetadataUpdatedEvent {
   export type InputTuple = [evaluator: AddressLike, metadata: string];
   export type OutputTuple = [evaluator: string, metadata: string];
@@ -320,22 +307,41 @@ export namespace EvaluatorSlashedEvent {
     evaluator: AddressLike,
     jobId: BigNumberish,
     amount: BigNumberish,
-    remainingStake: BigNumberish,
     reason: BytesLike
   ];
   export type OutputTuple = [
     evaluator: string,
     jobId: bigint,
     amount: bigint,
-    remainingStake: bigint,
     reason: string
   ];
   export interface OutputObject {
     evaluator: string;
     jobId: bigint;
     amount: bigint;
-    remainingStake: bigint;
     reason: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EvaluatorStakeUpdatedEvent {
+  export type InputTuple = [
+    evaluator: AddressLike,
+    oldBalance: BigNumberish,
+    newBalance: BigNumberish
+  ];
+  export type OutputTuple = [
+    evaluator: string,
+    oldBalance: bigint,
+    newBalance: bigint
+  ];
+  export interface OutputObject {
+    evaluator: string;
+    oldBalance: bigint;
+    newBalance: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -568,7 +574,7 @@ export interface EvaluatorRegistry extends BaseContract {
   assignEvaluator: TypedContractMethod<
     [jobId: BigNumberish, provider: AddressLike, client: AddressLike],
     [string],
-    "nonpayable"
+    "view"
   >;
 
   cancelProposal: TypedContractMethod<[key: BytesLike], [void], "nonpayable">;
@@ -677,7 +683,7 @@ export interface EvaluatorRegistry extends BaseContract {
   ): TypedContractMethod<
     [jobId: BigNumberish, provider: AddressLike, client: AddressLike],
     [string],
-    "nonpayable"
+    "view"
   >;
   getFunction(
     nameOrSignature: "cancelProposal"
@@ -759,13 +765,6 @@ export interface EvaluatorRegistry extends BaseContract {
   ): TypedContractMethod<[], [bigint], "view">;
 
   getEvent(
-    key: "EvaluatorAssigned"
-  ): TypedContractEvent<
-    EvaluatorAssignedEvent.InputTuple,
-    EvaluatorAssignedEvent.OutputTuple,
-    EvaluatorAssignedEvent.OutputObject
-  >;
-  getEvent(
     key: "EvaluatorMetadataUpdated"
   ): TypedContractEvent<
     EvaluatorMetadataUpdatedEvent.InputTuple,
@@ -778,6 +777,13 @@ export interface EvaluatorRegistry extends BaseContract {
     EvaluatorSlashedEvent.InputTuple,
     EvaluatorSlashedEvent.OutputTuple,
     EvaluatorSlashedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EvaluatorStakeUpdated"
+  ): TypedContractEvent<
+    EvaluatorStakeUpdatedEvent.InputTuple,
+    EvaluatorStakeUpdatedEvent.OutputTuple,
+    EvaluatorStakeUpdatedEvent.OutputObject
   >;
   getEvent(
     key: "JobManagerProposed"
@@ -858,17 +864,6 @@ export interface EvaluatorRegistry extends BaseContract {
   >;
 
   filters: {
-    "EvaluatorAssigned(uint256,address)": TypedContractEvent<
-      EvaluatorAssignedEvent.InputTuple,
-      EvaluatorAssignedEvent.OutputTuple,
-      EvaluatorAssignedEvent.OutputObject
-    >;
-    EvaluatorAssigned: TypedContractEvent<
-      EvaluatorAssignedEvent.InputTuple,
-      EvaluatorAssignedEvent.OutputTuple,
-      EvaluatorAssignedEvent.OutputObject
-    >;
-
     "EvaluatorMetadataUpdated(address,string)": TypedContractEvent<
       EvaluatorMetadataUpdatedEvent.InputTuple,
       EvaluatorMetadataUpdatedEvent.OutputTuple,
@@ -880,7 +875,7 @@ export interface EvaluatorRegistry extends BaseContract {
       EvaluatorMetadataUpdatedEvent.OutputObject
     >;
 
-    "EvaluatorSlashed(address,uint256,uint256,uint256,bytes32)": TypedContractEvent<
+    "EvaluatorSlashed(address,uint256,uint256,bytes32)": TypedContractEvent<
       EvaluatorSlashedEvent.InputTuple,
       EvaluatorSlashedEvent.OutputTuple,
       EvaluatorSlashedEvent.OutputObject
@@ -889,6 +884,17 @@ export interface EvaluatorRegistry extends BaseContract {
       EvaluatorSlashedEvent.InputTuple,
       EvaluatorSlashedEvent.OutputTuple,
       EvaluatorSlashedEvent.OutputObject
+    >;
+
+    "EvaluatorStakeUpdated(address,uint256,uint256)": TypedContractEvent<
+      EvaluatorStakeUpdatedEvent.InputTuple,
+      EvaluatorStakeUpdatedEvent.OutputTuple,
+      EvaluatorStakeUpdatedEvent.OutputObject
+    >;
+    EvaluatorStakeUpdated: TypedContractEvent<
+      EvaluatorStakeUpdatedEvent.InputTuple,
+      EvaluatorStakeUpdatedEvent.OutputTuple,
+      EvaluatorStakeUpdatedEvent.OutputObject
     >;
 
     "JobManagerProposed(address,uint256)": TypedContractEvent<

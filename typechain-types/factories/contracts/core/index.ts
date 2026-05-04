@@ -4,3 +4,4 @@
 export * as agentJobManagerSol from "./AgentJobManager.sol";
 export * as reputationBridgeSol from "./ReputationBridge.sol";
 export { EvaluatorRegistry__factory } from "./EvaluatorRegistry__factory";
+export { Treasury__factory } from "./Treasury__factory";

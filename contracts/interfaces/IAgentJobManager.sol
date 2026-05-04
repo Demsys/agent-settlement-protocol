@@ -104,9 +104,27 @@ interface IAgentJobManager {
     event JobSubmitted(uint256 indexed jobId, bytes32 deliverable);
 
     /**
+     * @notice Emitted when fee revenue is distributed on complete() or reject().
+     * @dev Emitted in both terminal states so evaluators are compensated for their
+     *      evaluation work regardless of verdict — this prevents a perverse incentive
+     *      to always call complete() in order to capture the fee share.
+     * @param jobId        Job whose fee was distributed.
+     * @param evaluator    Evaluator wallet that received evaluatorFee (80% of gross fee).
+     * @param evaluatorFee Token units sent to the evaluator.
+     * @param treasuryFee  Token units sent to the Treasury contract (20% of gross fee).
+     *                     Rounding: evaluatorFee truncates toward zero; remainder goes to treasury.
+     */
+    event FeeDistributed(
+        uint256 indexed jobId,
+        address indexed evaluator,
+        uint256 evaluatorFee,
+        uint256 treasuryFee
+    );
+
+    /**
      * @notice Emitted when the Evaluator approves the deliverable — job transitions to Completed.
      * @param payment Net amount transferred to the Provider after protocol fee deduction.
-     * @param fee     Protocol fee amount extracted and sent to the fee recipient.
+     * @param fee     Gross protocol fee distributed (see FeeDistributed for the split breakdown).
      */
     event JobCompleted(
         uint256 indexed jobId,
@@ -282,9 +300,10 @@ interface IAgentJobManager {
      * @dev Implements the CEI pattern strictly:
      *      (1) Checks: status == Submitted, msg.sender == evaluator
      *      (2) Effects: status = Completed, budget = 0, record fee split
-     *      (3) Interactions: safeTransfer to provider, safeTransfer to feeRecipient
-     *      The protocol fee (feeRate basis points, max 500 = 5%) is sent to the
-     *      fee recipient (ProtocolToken) which handles burn and staker distribution.
+     *      (3) Interactions: safeTransfer to treasury (20%), safeTransfer to evaluator (80%),
+     *          safeTransfer to provider (budget - fee)
+     *      The gross protocol fee (feeRate basis points, max 500 = 5%) is split 80/20
+     *      between the assigned evaluator and the Treasury contract (see FeeDistributed).
      *      Fee rounding always favors the Provider (truncation toward zero).
      *      Reverts if: job is not Submitted, or msg.sender is not the Evaluator.
      * @param jobId  The job to mark as completed.

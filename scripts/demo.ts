@@ -28,7 +28,7 @@ interface DeploymentManifest {
   }
   config: {
     feeRate: number
-    feeRecipient: string
+    treasury: string
   }
 }
 
@@ -368,8 +368,8 @@ async function main(): Promise<void> {
 
   // ── Settlement summary ────────────────────────────────────────────────────
   const bobUSDCAfter = await mockUSDCAsAlice.balanceOf(bob.address)
-  const feeRecipientBalance = await mockUSDCAsAlice.balanceOf(
-    manifest.config.feeRecipient,
+  const treasuryBalance = await mockUSDCAsAlice.balanceOf(
+    manifest.config.treasury,
   )
 
   // Reconstruct payment and fee amounts from first principles for a clear display.
@@ -382,7 +382,7 @@ async function main(): Promise<void> {
     `  ${pad("Budget")} :  ${ethers.formatUnits(budgetWei, USDC_DECIMALS)} USDC`,
   )
   console.log(
-    `  ${pad(`Fee (${Number(FEE_RATE_BPS) / 100}%)`)} :  ${ethers.formatUnits(feeWei, USDC_DECIMALS)} USDC  \u2192  feeRecipient`,
+    `  ${pad(`Fee (${Number(FEE_RATE_BPS) / 100}%)`)} :  ${ethers.formatUnits(feeWei, USDC_DECIMALS)} USDC  \u2192  evaluator (80%) + treasury (20%)`,
   )
   console.log(
     `  ${pad("Payment")} :  ${ethers.formatUnits(paymentWei, USDC_DECIMALS)} USDC  \u2192  Bob \u2713`,
