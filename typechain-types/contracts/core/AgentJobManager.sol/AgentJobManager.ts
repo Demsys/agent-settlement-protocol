@@ -69,6 +69,7 @@ export interface AgentJobManagerInterface extends Interface {
   getFunction(
     nameOrSignature:
       | "EVALUATION_GRACE_PERIOD"
+      | "EVALUATOR_SHARE_BPS"
       | "GOVERNANCE_DELAY"
       | "MAX_FEE_RATE"
       | "MIN_BUDGET"
@@ -84,38 +85,36 @@ export interface AgentJobManagerInterface extends Interface {
       | "disallowToken"
       | "evaluatorRegistry"
       | "executeFeeRate"
-      | "executeFeeRecipient"
       | "executeReputationBridge"
+      | "executeTreasury"
       | "extendDeadline"
       | "feeRate"
-      | "feeRecipient"
       | "fund"
       | "getFeeRate"
       | "getJob"
       | "getPendingRefund"
       | "owner"
       | "proposeFeeRate"
-      | "proposeFeeRecipient"
       | "proposeReputationBridge"
+      | "proposeTreasury"
       | "reject"
       | "renounceOwnership"
       | "reopen"
       | "reputationBridge"
-      | "selfServiceEnabled"
       | "setBudget"
-      | "setSelfServiceEnabled"
       | "submit"
       | "transferOwnership"
+      | "treasury"
   ): FunctionFragment;
 
   getEvent(
     nameOrSignatureOrTopic:
       | "BudgetSet"
       | "DeadlineExtended"
+      | "EvaluatorAssigned"
+      | "FeeDistributed"
       | "FeeRateProposed"
       | "FeeRateUpdated"
-      | "FeeRecipientProposed"
-      | "FeeRecipientUpdated"
       | "JobCompleted"
       | "JobCreated"
       | "JobExpired"
@@ -129,13 +128,18 @@ export interface AgentJobManagerInterface extends Interface {
       | "RefundPending"
       | "ReputationBridgeProposed"
       | "ReputationBridgeUpdated"
-      | "SelfServiceToggled"
       | "TokenAllowed"
       | "TokenDisallowed"
+      | "TreasuryProposed"
+      | "TreasuryUpdated"
   ): EventFragment;
 
   encodeFunctionData(
     functionFragment: "EVALUATION_GRACE_PERIOD",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "EVALUATOR_SHARE_BPS",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -199,11 +203,11 @@ export interface AgentJobManagerInterface extends Interface {
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
-    functionFragment: "executeFeeRecipient",
+    functionFragment: "executeReputationBridge",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
-    functionFragment: "executeReputationBridge",
+    functionFragment: "executeTreasury",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
@@ -211,10 +215,6 @@ export interface AgentJobManagerInterface extends Interface {
     values: [BigNumberish, BigNumberish]
   ): string;
   encodeFunctionData(functionFragment: "feeRate", values?: undefined): string;
-  encodeFunctionData(
-    functionFragment: "feeRecipient",
-    values?: undefined
-  ): string;
   encodeFunctionData(
     functionFragment: "fund",
     values: [BigNumberish, BigNumberish]
@@ -237,11 +237,11 @@ export interface AgentJobManagerInterface extends Interface {
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
-    functionFragment: "proposeFeeRecipient",
+    functionFragment: "proposeReputationBridge",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
-    functionFragment: "proposeReputationBridge",
+    functionFragment: "proposeTreasury",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
@@ -261,16 +261,8 @@ export interface AgentJobManagerInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
-    functionFragment: "selfServiceEnabled",
-    values?: undefined
-  ): string;
-  encodeFunctionData(
     functionFragment: "setBudget",
     values: [BigNumberish, BigNumberish]
-  ): string;
-  encodeFunctionData(
-    functionFragment: "setSelfServiceEnabled",
-    values: [boolean]
   ): string;
   encodeFunctionData(
     functionFragment: "submit",
@@ -280,9 +272,14 @@ export interface AgentJobManagerInterface extends Interface {
     functionFragment: "transferOwnership",
     values: [AddressLike]
   ): string;
+  encodeFunctionData(functionFragment: "treasury", values?: undefined): string;
 
   decodeFunctionResult(
     functionFragment: "EVALUATION_GRACE_PERIOD",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "EVALUATOR_SHARE_BPS",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -334,11 +331,11 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "executeFeeRecipient",
+    functionFragment: "executeReputationBridge",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "executeReputationBridge",
+    functionFragment: "executeTreasury",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -346,10 +343,6 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "feeRate", data: BytesLike): Result;
-  decodeFunctionResult(
-    functionFragment: "feeRecipient",
-    data: BytesLike
-  ): Result;
   decodeFunctionResult(functionFragment: "fund", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "getFeeRate", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "getJob", data: BytesLike): Result;
@@ -363,11 +356,11 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "proposeFeeRecipient",
+    functionFragment: "proposeReputationBridge",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "proposeReputationBridge",
+    functionFragment: "proposeTreasury",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "reject", data: BytesLike): Result;
@@ -380,20 +373,13 @@ export interface AgentJobManagerInterface extends Interface {
     functionFragment: "reputationBridge",
     data: BytesLike
   ): Result;
-  decodeFunctionResult(
-    functionFragment: "selfServiceEnabled",
-    data: BytesLike
-  ): Result;
   decodeFunctionResult(functionFragment: "setBudget", data: BytesLike): Result;
-  decodeFunctionResult(
-    functionFragment: "setSelfServiceEnabled",
-    data: BytesLike
-  ): Result;
   decodeFunctionResult(functionFragment: "submit", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "transferOwnership",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "treasury", data: BytesLike): Result;
 }
 
 export namespace BudgetSetEvent {
@@ -431,6 +417,44 @@ export namespace DeadlineExtendedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace EvaluatorAssignedEvent {
+  export type InputTuple = [jobId: BigNumberish, evaluator: AddressLike];
+  export type OutputTuple = [jobId: bigint, evaluator: string];
+  export interface OutputObject {
+    jobId: bigint;
+    evaluator: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace FeeDistributedEvent {
+  export type InputTuple = [
+    jobId: BigNumberish,
+    evaluator: AddressLike,
+    evaluatorFee: BigNumberish,
+    treasuryFee: BigNumberish
+  ];
+  export type OutputTuple = [
+    jobId: bigint,
+    evaluator: string,
+    evaluatorFee: bigint,
+    treasuryFee: bigint
+  ];
+  export interface OutputObject {
+    jobId: bigint;
+    evaluator: string;
+    evaluatorFee: bigint;
+    treasuryFee: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace FeeRateProposedEvent {
   export type InputTuple = [
     newFeeRate: BigNumberish,
@@ -453,38 +477,6 @@ export namespace FeeRateUpdatedEvent {
   export interface OutputObject {
     oldFeeRate: bigint;
     newFeeRate: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
-export namespace FeeRecipientProposedEvent {
-  export type InputTuple = [
-    newFeeRecipient: AddressLike,
-    executableAt: BigNumberish
-  ];
-  export type OutputTuple = [newFeeRecipient: string, executableAt: bigint];
-  export interface OutputObject {
-    newFeeRecipient: string;
-    executableAt: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
-export namespace FeeRecipientUpdatedEvent {
-  export type InputTuple = [
-    oldFeeRecipient: AddressLike,
-    newFeeRecipient: AddressLike
-  ];
-  export type OutputTuple = [oldFeeRecipient: string, newFeeRecipient: string];
-  export interface OutputObject {
-    oldFeeRecipient: string;
-    newFeeRecipient: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -717,18 +709,6 @@ export namespace ReputationBridgeUpdatedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace SelfServiceToggledEvent {
-  export type InputTuple = [enabled: boolean];
-  export type OutputTuple = [enabled: boolean];
-  export interface OutputObject {
-    enabled: boolean;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
 export namespace TokenAllowedEvent {
   export type InputTuple = [token: AddressLike];
   export type OutputTuple = [token: string];
@@ -746,6 +726,35 @@ export namespace TokenDisallowedEvent {
   export type OutputTuple = [token: string];
   export interface OutputObject {
     token: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace TreasuryProposedEvent {
+  export type InputTuple = [
+    newTreasury: AddressLike,
+    executableAt: BigNumberish
+  ];
+  export type OutputTuple = [newTreasury: string, executableAt: bigint];
+  export interface OutputObject {
+    newTreasury: string;
+    executableAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace TreasuryUpdatedEvent {
+  export type InputTuple = [oldTreasury: AddressLike, newTreasury: AddressLike];
+  export type OutputTuple = [oldTreasury: string, newTreasury: string];
+  export interface OutputObject {
+    oldTreasury: string;
+    newTreasury: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -797,6 +806,8 @@ export interface AgentJobManager extends BaseContract {
   ): Promise<this>;
 
   EVALUATION_GRACE_PERIOD: TypedContractMethod<[], [bigint], "view">;
+
+  EVALUATOR_SHARE_BPS: TypedContractMethod<[], [bigint], "view">;
 
   GOVERNANCE_DELAY: TypedContractMethod<[], [bigint], "view">;
 
@@ -853,14 +864,14 @@ export interface AgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
-  executeFeeRecipient: TypedContractMethod<
-    [newFeeRecipient: AddressLike],
+  executeReputationBridge: TypedContractMethod<
+    [_bridge: AddressLike],
     [void],
     "nonpayable"
   >;
 
-  executeReputationBridge: TypedContractMethod<
-    [_bridge: AddressLike],
+  executeTreasury: TypedContractMethod<
+    [newTreasury: AddressLike],
     [void],
     "nonpayable"
   >;
@@ -872,8 +883,6 @@ export interface AgentJobManager extends BaseContract {
   >;
 
   feeRate: TypedContractMethod<[], [bigint], "view">;
-
-  feeRecipient: TypedContractMethod<[], [string], "view">;
 
   fund: TypedContractMethod<
     [jobId: BigNumberish, expectedBudget: BigNumberish],
@@ -903,14 +912,14 @@ export interface AgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
-  proposeFeeRecipient: TypedContractMethod<
-    [newFeeRecipient: AddressLike],
+  proposeReputationBridge: TypedContractMethod<
+    [_bridge: AddressLike],
     [void],
     "nonpayable"
   >;
 
-  proposeReputationBridge: TypedContractMethod<
-    [_bridge: AddressLike],
+  proposeTreasury: TypedContractMethod<
+    [newTreasury: AddressLike],
     [void],
     "nonpayable"
   >;
@@ -931,16 +940,8 @@ export interface AgentJobManager extends BaseContract {
 
   reputationBridge: TypedContractMethod<[], [string], "view">;
 
-  selfServiceEnabled: TypedContractMethod<[], [boolean], "view">;
-
   setBudget: TypedContractMethod<
     [jobId: BigNumberish, amount: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-
-  setSelfServiceEnabled: TypedContractMethod<
-    [enabled: boolean],
     [void],
     "nonpayable"
   >;
@@ -957,12 +958,17 @@ export interface AgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
+  treasury: TypedContractMethod<[], [string], "view">;
+
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
   ): T;
 
   getFunction(
     nameOrSignature: "EVALUATION_GRACE_PERIOD"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "EVALUATOR_SHARE_BPS"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "GOVERNANCE_DELAY"
@@ -1023,11 +1029,11 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "executeFeeRate"
   ): TypedContractMethod<[newFeeRate: BigNumberish], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "executeFeeRecipient"
-  ): TypedContractMethod<[newFeeRecipient: AddressLike], [void], "nonpayable">;
-  getFunction(
     nameOrSignature: "executeReputationBridge"
   ): TypedContractMethod<[_bridge: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "executeTreasury"
+  ): TypedContractMethod<[newTreasury: AddressLike], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "extendDeadline"
   ): TypedContractMethod<
@@ -1038,9 +1044,6 @@ export interface AgentJobManager extends BaseContract {
   getFunction(
     nameOrSignature: "feeRate"
   ): TypedContractMethod<[], [bigint], "view">;
-  getFunction(
-    nameOrSignature: "feeRecipient"
-  ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "fund"
   ): TypedContractMethod<
@@ -1072,11 +1075,11 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "proposeFeeRate"
   ): TypedContractMethod<[newFeeRate: BigNumberish], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "proposeFeeRecipient"
-  ): TypedContractMethod<[newFeeRecipient: AddressLike], [void], "nonpayable">;
-  getFunction(
     nameOrSignature: "proposeReputationBridge"
   ): TypedContractMethod<[_bridge: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "proposeTreasury"
+  ): TypedContractMethod<[newTreasury: AddressLike], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "reject"
   ): TypedContractMethod<
@@ -1098,18 +1101,12 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "reputationBridge"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
-    nameOrSignature: "selfServiceEnabled"
-  ): TypedContractMethod<[], [boolean], "view">;
-  getFunction(
     nameOrSignature: "setBudget"
   ): TypedContractMethod<
     [jobId: BigNumberish, amount: BigNumberish],
     [void],
     "nonpayable"
   >;
-  getFunction(
-    nameOrSignature: "setSelfServiceEnabled"
-  ): TypedContractMethod<[enabled: boolean], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "submit"
   ): TypedContractMethod<
@@ -1120,6 +1117,9 @@ export interface AgentJobManager extends BaseContract {
   getFunction(
     nameOrSignature: "transferOwnership"
   ): TypedContractMethod<[newOwner: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "treasury"
+  ): TypedContractMethod<[], [string], "view">;
 
   getEvent(
     key: "BudgetSet"
@@ -1136,6 +1136,20 @@ export interface AgentJobManager extends BaseContract {
     DeadlineExtendedEvent.OutputObject
   >;
   getEvent(
+    key: "EvaluatorAssigned"
+  ): TypedContractEvent<
+    EvaluatorAssignedEvent.InputTuple,
+    EvaluatorAssignedEvent.OutputTuple,
+    EvaluatorAssignedEvent.OutputObject
+  >;
+  getEvent(
+    key: "FeeDistributed"
+  ): TypedContractEvent<
+    FeeDistributedEvent.InputTuple,
+    FeeDistributedEvent.OutputTuple,
+    FeeDistributedEvent.OutputObject
+  >;
+  getEvent(
     key: "FeeRateProposed"
   ): TypedContractEvent<
     FeeRateProposedEvent.InputTuple,
@@ -1148,20 +1162,6 @@ export interface AgentJobManager extends BaseContract {
     FeeRateUpdatedEvent.InputTuple,
     FeeRateUpdatedEvent.OutputTuple,
     FeeRateUpdatedEvent.OutputObject
-  >;
-  getEvent(
-    key: "FeeRecipientProposed"
-  ): TypedContractEvent<
-    FeeRecipientProposedEvent.InputTuple,
-    FeeRecipientProposedEvent.OutputTuple,
-    FeeRecipientProposedEvent.OutputObject
-  >;
-  getEvent(
-    key: "FeeRecipientUpdated"
-  ): TypedContractEvent<
-    FeeRecipientUpdatedEvent.InputTuple,
-    FeeRecipientUpdatedEvent.OutputTuple,
-    FeeRecipientUpdatedEvent.OutputObject
   >;
   getEvent(
     key: "JobCompleted"
@@ -1255,13 +1255,6 @@ export interface AgentJobManager extends BaseContract {
     ReputationBridgeUpdatedEvent.OutputObject
   >;
   getEvent(
-    key: "SelfServiceToggled"
-  ): TypedContractEvent<
-    SelfServiceToggledEvent.InputTuple,
-    SelfServiceToggledEvent.OutputTuple,
-    SelfServiceToggledEvent.OutputObject
-  >;
-  getEvent(
     key: "TokenAllowed"
   ): TypedContractEvent<
     TokenAllowedEvent.InputTuple,
@@ -1274,6 +1267,20 @@ export interface AgentJobManager extends BaseContract {
     TokenDisallowedEvent.InputTuple,
     TokenDisallowedEvent.OutputTuple,
     TokenDisallowedEvent.OutputObject
+  >;
+  getEvent(
+    key: "TreasuryProposed"
+  ): TypedContractEvent<
+    TreasuryProposedEvent.InputTuple,
+    TreasuryProposedEvent.OutputTuple,
+    TreasuryProposedEvent.OutputObject
+  >;
+  getEvent(
+    key: "TreasuryUpdated"
+  ): TypedContractEvent<
+    TreasuryUpdatedEvent.InputTuple,
+    TreasuryUpdatedEvent.OutputTuple,
+    TreasuryUpdatedEvent.OutputObject
   >;
 
   filters: {
@@ -1299,6 +1306,28 @@ export interface AgentJobManager extends BaseContract {
       DeadlineExtendedEvent.OutputObject
     >;
 
+    "EvaluatorAssigned(uint256,address)": TypedContractEvent<
+      EvaluatorAssignedEvent.InputTuple,
+      EvaluatorAssignedEvent.OutputTuple,
+      EvaluatorAssignedEvent.OutputObject
+    >;
+    EvaluatorAssigned: TypedContractEvent<
+      EvaluatorAssignedEvent.InputTuple,
+      EvaluatorAssignedEvent.OutputTuple,
+      EvaluatorAssignedEvent.OutputObject
+    >;
+
+    "FeeDistributed(uint256,address,uint256,uint256)": TypedContractEvent<
+      FeeDistributedEvent.InputTuple,
+      FeeDistributedEvent.OutputTuple,
+      FeeDistributedEvent.OutputObject
+    >;
+    FeeDistributed: TypedContractEvent<
+      FeeDistributedEvent.InputTuple,
+      FeeDistributedEvent.OutputTuple,
+      FeeDistributedEvent.OutputObject
+    >;
+
     "FeeRateProposed(uint256,uint256)": TypedContractEvent<
       FeeRateProposedEvent.InputTuple,
       FeeRateProposedEvent.OutputTuple,
@@ -1319,28 +1348,6 @@ export interface AgentJobManager extends BaseContract {
       FeeRateUpdatedEvent.InputTuple,
       FeeRateUpdatedEvent.OutputTuple,
       FeeRateUpdatedEvent.OutputObject
-    >;
-
-    "FeeRecipientProposed(address,uint256)": TypedContractEvent<
-      FeeRecipientProposedEvent.InputTuple,
-      FeeRecipientProposedEvent.OutputTuple,
-      FeeRecipientProposedEvent.OutputObject
-    >;
-    FeeRecipientProposed: TypedContractEvent<
-      FeeRecipientProposedEvent.InputTuple,
-      FeeRecipientProposedEvent.OutputTuple,
-      FeeRecipientProposedEvent.OutputObject
-    >;
-
-    "FeeRecipientUpdated(address,address)": TypedContractEvent<
-      FeeRecipientUpdatedEvent.InputTuple,
-      FeeRecipientUpdatedEvent.OutputTuple,
-      FeeRecipientUpdatedEvent.OutputObject
-    >;
-    FeeRecipientUpdated: TypedContractEvent<
-      FeeRecipientUpdatedEvent.InputTuple,
-      FeeRecipientUpdatedEvent.OutputTuple,
-      FeeRecipientUpdatedEvent.OutputObject
     >;
 
     "JobCompleted(uint256,address,uint256,uint256)": TypedContractEvent<
@@ -1486,17 +1493,6 @@ export interface AgentJobManager extends BaseContract {
       ReputationBridgeUpdatedEvent.OutputObject
     >;
 
-    "SelfServiceToggled(bool)": TypedContractEvent<
-      SelfServiceToggledEvent.InputTuple,
-      SelfServiceToggledEvent.OutputTuple,
-      SelfServiceToggledEvent.OutputObject
-    >;
-    SelfServiceToggled: TypedContractEvent<
-      SelfServiceToggledEvent.InputTuple,
-      SelfServiceToggledEvent.OutputTuple,
-      SelfServiceToggledEvent.OutputObject
-    >;
-
     "TokenAllowed(address)": TypedContractEvent<
       TokenAllowedEvent.InputTuple,
       TokenAllowedEvent.OutputTuple,
@@ -1517,6 +1513,28 @@ export interface AgentJobManager extends BaseContract {
       TokenDisallowedEvent.InputTuple,
       TokenDisallowedEvent.OutputTuple,
       TokenDisallowedEvent.OutputObject
+    >;
+
+    "TreasuryProposed(address,uint256)": TypedContractEvent<
+      TreasuryProposedEvent.InputTuple,
+      TreasuryProposedEvent.OutputTuple,
+      TreasuryProposedEvent.OutputObject
+    >;
+    TreasuryProposed: TypedContractEvent<
+      TreasuryProposedEvent.InputTuple,
+      TreasuryProposedEvent.OutputTuple,
+      TreasuryProposedEvent.OutputObject
+    >;
+
+    "TreasuryUpdated(address,address)": TypedContractEvent<
+      TreasuryUpdatedEvent.InputTuple,
+      TreasuryUpdatedEvent.OutputTuple,
+      TreasuryUpdatedEvent.OutputObject
+    >;
+    TreasuryUpdated: TypedContractEvent<
+      TreasuryUpdatedEvent.InputTuple,
+      TreasuryUpdatedEvent.OutputTuple,
+      TreasuryUpdatedEvent.OutputObject
     >;
   };
 }

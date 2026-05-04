@@ -1,33 +1,37 @@
 {
   "network": "base-sepolia",
   "chainId": 84532,
-  "deployedAt": "2026-04-10T13:05:43.814Z",
+  "deployedAt": "2026-05-04T14:36:03.586Z",
   "deployer": "0xEEb3E4548fbdfb8F3bEF8D496cC086Bb403C85E5",
   "contracts": {
     "MockUSDC": {
-      "address": "0x2334bcfd88644d77531C47adCB07872fbcE40afC",
-      "txHash": "0x30bf8def35dcbc43758b2ed916f40ff99af9d43b93d484c9bae248d2ace6917f"
+      "address": "0xC87bde7b470e23Db5558fb4eE4073908dA21Bb0B",
+      "txHash": "0x0348fa77b280855a740cebe78264e6daac5f69bb370f1c29fa34db7fb2b147f1"
     },
     "ProtocolToken": {
-      "address": "0x9FC09D3b2ACc67c7F1a2e961e3c5fA32Cc94514A",
-      "txHash": "0xd901ff88de2aa009d4a980a3a2db6d7111ab6c447c88fe78a69ecfc7d0ab23ab"
+      "address": "0x4c4468567eE753d1b27Cf02b5896b4af71c40719",
+      "txHash": "0x294e121722d600c53241976938ce3b35e4685a12aafacc5ed53ea7f461387e7b"
+    },
+    "Treasury": {
+      "address": "0x3CB5FB6C2b986e9Aa545da958E77b847C6FF677D",
+      "txHash": "0x9ee282960e5a96b3cd189908de538dd0348dbf6611012c4ddc281df6deac26fc"
     },
     "EvaluatorRegistry": {
-      "address": "0x454911f476493dcB34273C9c22Ded2CeCec0Dd2c",
-      "txHash": "0xe6fe3d65c0b9323fc6035d200bfd6bf7d0a6ae8a442cb2f22340123a2f37110a"
+      "address": "0x4F4aa58A715B6a5357da0EA067C405803f489BD1",
+      "txHash": "0xe682600e72a690736b061ec3d26b2853477e1d6935c5bc851a783b806f7ac86a"
     },
     "AgentJobManager": {
-      "address": "0xB8C41C289AA2D55b7A8ae53003F212AcABEcc597",
-      "txHash": "0xc91e3ba2c5bab22fdcd35946878c2e6a1ed66f703acd2ac191384c4b4077039e"
+      "address": "0xC07CE789206CBEEC3A41D5CedBdA93B1024aaDdd",
+      "txHash": "0x55f81e6c428f0afddcac3b89a4d63f6331c92e93bab95c6107620ad358842b91"
     },
     "ReputationBridge": {
-      "address": "0x2Fa2eB888e217e095638fa3763322DAcaAac904a",
-      "txHash": "0x63585cbc1e204e0ba8027c0455536a6918e6ac5feed80b9631dd1dd4d7e42b4b"
+      "address": "0x8CEbEF8f552bC8fDB48FBB8ad9B21CE1e3E03bfd",
+      "txHash": "0x0158988864462ba3d69abe96281f5b8eb97833d9eaa8ec568fab9fd1d0d74557"
     }
   },
   "config": {
     "feeRate": 50,
-    "feeRecipient": "0xEEb3E4548fbdfb8F3bEF8D496cC086Bb403C85E5",
+    "treasury": "0x3CB5FB6C2b986e9Aa545da958E77b847C6FF677D",
     "minEvaluatorStake": "100000000000000000000"
   }
 }

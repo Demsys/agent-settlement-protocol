@@ -33,13 +33,14 @@ interface DeploymentManifest {
   contracts: {
     MockUSDC: ContractDeployment
     ProtocolToken: ContractDeployment
+    Treasury: ContractDeployment
     EvaluatorRegistry: ContractDeployment
     AgentJobManager: ContractDeployment
     ReputationBridge: ContractDeployment
   }
   config: {
     feeRate: number
-    feeRecipient: string
+    treasury: string
     minEvaluatorStake: string
   }
 }
@@ -185,7 +186,33 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // ── 3. EvaluatorRegistry ────────────────────────────────────────────────────
+  // ── 3. Treasury ─────────────────────────────────────────────────────────────
+  // Deployed before AgentJobManager so its address can be passed as `_treasury`
+  // to the AgentJobManager constructor. Treasury is the 20% fee destination.
+  // IS_STUB = true signals testnet deployment — buybackAndBurn() only emits an event.
+  let treasuryDeployment: ContractDeployment
+  let treasuryAddress: string
+  try {
+    const Treasury = await ethers.getContractFactory("Treasury")
+    const treasury = await Treasury.deploy(await getFreshGasOverrides())
+    await treasury.waitForDeployment()
+    const receipt = await treasury.deploymentTransaction()!.wait(1)
+    if (receipt === null || receipt.status === 0) {
+      throw new Error("Treasury deployment transaction failed (status 0)")
+    }
+    treasuryAddress = await treasury.getAddress()
+    treasuryDeployment = {
+      address: treasuryAddress,
+      txHash: receipt.hash,
+    }
+    logDeployment("Treasury", treasuryDeployment.address, treasuryDeployment.txHash)
+  } catch (err) {
+    console.error("\n  ERROR: Treasury deployment failed.")
+    console.error(err)
+    process.exit(1)
+  }
+
+  // ── 4. EvaluatorRegistry ────────────────────────────────────────────────────
   // Depends on ProtocolToken for staking denominations.
   // The registry manages the decentralised evaluator staker network.
   let evaluatorRegistryDeployment: ContractDeployment
@@ -210,10 +237,9 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // ── 4. AgentJobManager ──────────────────────────────────────────────────────
+  // ── 5. AgentJobManager ──────────────────────────────────────────────────────
   // Core ERC-8183 implementation.
-  // feeRecipient is set to the deployer wallet for the initial SaaS phase;
-  // governance can rotate this address via ProtocolToken DAO post-launch.
+  // _treasury is set to the Treasury contract deployed above (step 3).
   // MockUSDC is passed in _initialAllowedTokens to whitelist it at construction
   // (FINDING-007: token whitelist to prevent fee-on-transfer token attacks).
   let agentJobManagerDeployment: ContractDeployment
@@ -223,7 +249,7 @@ async function main(): Promise<void> {
     const agentJobManager = await AgentJobManager.deploy(
       evaluatorRegistryAddress,
       FEE_RATE,
-      deployer.address,   // feeRecipient = deployer wallet for initial SaaS phase
+      treasuryAddress,    // _treasury = Treasury contract (receives 20% of every fee)
       ethers.ZeroAddress, // _reputationBridge — wired post-deployment via setReputationBridge()
       [mockUSDCDeployment.address], // _initialAllowedTokens — FINDING-007
       await getFreshGasOverrides(),
@@ -245,7 +271,7 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // ── 5. ReputationBridge ─────────────────────────────────────────────────────
+  // ── 6. ReputationBridge ─────────────────────────────────────────────────────
   // Bridges ERC-8183 job outcomes to ERC-8004 reputation scores.
   // Depends on AgentJobManager to listen for completion/rejection events.
   let reputationBridgeDeployment: ContractDeployment
@@ -344,30 +370,6 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // ── Enable self-service mode for single-agent MVP ─────────────────────────
-  // AUDIT-H1: selfServiceEnabled defaults to false in the contract (prevents
-  // reputation farming). Enable here for the testnet MVP where the same wallet
-  // acts as both client and provider.
-  // ⚠ TODO: remove this step (or explicitly call setSelfServiceEnabled(false))
-  //          before deploying to mainnet for multi-party production use.
-  try {
-    const agentJobManager = await ethers.getContractAt(
-      "AgentJobManager",
-      agentJobManagerAddress,
-    )
-    const tx = await agentJobManager.setSelfServiceEnabled(true, await getFreshGasOverrides())
-    const receipt = await tx.wait(1)
-    if (receipt === null || receipt.status === 0) {
-      throw new Error("AgentJobManager.setSelfServiceEnabled transaction failed (status 0)")
-    }
-    logConfig(`AgentJobManager.setSelfServiceEnabled(true) — MVP single-agent mode`, receipt.hash)
-    console.log("  ⚠  NOTE: disable selfServiceEnabled before mainnet production deployment.")
-  } catch (err) {
-    console.error("\n  ERROR: AgentJobManager.setSelfServiceEnabled() failed.")
-    console.error(err)
-    process.exit(1)
-  }
-
   // ── Deployment manifest ──────────────────────────────────────────────────────
   // Persist all addresses and metadata so that the SDK and integration tests
   // can locate the contracts without re-querying the chain.
@@ -380,13 +382,14 @@ async function main(): Promise<void> {
     contracts: {
       MockUSDC: mockUSDCDeployment,
       ProtocolToken: protocolTokenDeployment,
+      Treasury: treasuryDeployment,
       EvaluatorRegistry: evaluatorRegistryDeployment,
       AgentJobManager: agentJobManagerDeployment,
       ReputationBridge: reputationBridgeDeployment,
     },
     config: {
       feeRate: Number(FEE_RATE),
-      feeRecipient: deployer.address,
+      treasury: treasuryAddress,
       minEvaluatorStake: MIN_EVALUATOR_STAKE,
     },
   }

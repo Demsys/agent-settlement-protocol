@@ -78,6 +78,8 @@ export type { IERC8004ReputationRegistry } from "./contracts/core/ReputationBrid
 export { IERC8004ReputationRegistry__factory } from "./factories/contracts/core/ReputationBridge.sol/IERC8004ReputationRegistry__factory";
 export type { ReputationBridge } from "./contracts/core/ReputationBridge.sol/ReputationBridge";
 export { ReputationBridge__factory } from "./factories/contracts/core/ReputationBridge.sol/ReputationBridge__factory";
+export type { Treasury } from "./contracts/core/Treasury";
+export { Treasury__factory } from "./factories/contracts/core/Treasury__factory";
 export type { IAgentJobManager } from "./contracts/interfaces/IAgentJobManager";
 export { IAgentJobManager__factory } from "./factories/contracts/interfaces/IAgentJobManager__factory";
 export type { MockERC8004Registry } from "./contracts/test/MockERC8004Registry";

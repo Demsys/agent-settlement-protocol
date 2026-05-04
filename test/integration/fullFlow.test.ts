@@ -229,9 +229,11 @@ describe("Integration: full protocol flow", function () {
     expect(job.status).to.equal(JobStatus.Rejected);
     expect(job.budget).to.equal(0n);
 
-    // Refund is registered for Alice
+    // Refund is registered for Alice — net of fee (feeRate=50bps charged on rejection)
+    // fee = FIVE_USDC * 50 / 10_000 = 25_000; alice receives budget - fee
+    const rejectFee = FIVE_USDC * 50n / 10000n;
     const pendingAfterReject = await manager.getPendingRefund(alice.address, usdcAddr);
-    expect(pendingAfterReject).to.equal(FIVE_USDC);
+    expect(pendingAfterReject).to.equal(FIVE_USDC - rejectFee);
 
     // ── Alice reopens the job with Carol as new provider ──────────────────────
     const deadline2 = BigInt(await time.latest()) + 3600n;
@@ -250,8 +252,8 @@ describe("Integration: full protocol flow", function () {
     // This is intentional per the reopen() security design: pending refunds are independent.
     const pendingStillPresent = await manager.getPendingRefund(alice.address, usdcAddr);
     expect(pendingStillPresent).to.equal(
-      FIVE_USDC,
-      "Pending refund should still be claimable after reopen"
+      FIVE_USDC - rejectFee,
+      "Pending refund (net of rejection fee) should still be claimable after reopen"
     );
 
     await manager.connect(alice).setBudget(1n, FIVE_USDC);
@@ -291,9 +293,9 @@ describe("Integration: full protocol flow", function () {
 
     await expect(manager.connect(alice).claimRefund(usdcAddr))
       .to.emit(manager, "RefundClaimed")
-      .withArgs(alice.address, usdcAddr, FIVE_USDC);
+      .withArgs(alice.address, usdcAddr, FIVE_USDC - rejectFee);
 
-    expect(await usdc.balanceOf(alice.address) - aliceBalanceBefore).to.equal(FIVE_USDC);
+    expect(await usdc.balanceOf(alice.address) - aliceBalanceBefore).to.equal(FIVE_USDC - rejectFee);
 
     // After claiming, pending refund should be zero
     const pendingAfterClaim = await manager.getPendingRefund(alice.address, usdcAddr);

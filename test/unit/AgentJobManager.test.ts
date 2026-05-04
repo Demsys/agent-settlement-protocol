@@ -215,11 +215,11 @@ describe("AgentJobManager", function () {
       ).to.be.revertedWithCustomError(manager, "ZeroAddress").withArgs("token");
     });
 
-    it("should revert SelfAssignment when client == provider and selfServiceEnabled is false (default)", async function () {
+    it("should revert SelfAssignment when client == provider", async function () {
       const { manager, usdc, client } = await loadFixture(deployFixture);
       const deadline = BigInt(await time.latest()) + 3600n;
 
-      // AUDIT-H1: selfServiceEnabled defaults to false — client == provider must revert.
+      // AUDIT-H1: client == provider is unconditionally forbidden — no bypass exists.
       await expect(
         manager.connect(client).createJob(
           client.address,
@@ -228,22 +228,6 @@ describe("AgentJobManager", function () {
           deadline
         )
       ).to.be.revertedWithCustomError(manager, "SelfAssignment").withArgs("provider");
-    });
-
-    it("should allow client == provider when setSelfServiceEnabled(true)", async function () {
-      const { manager, usdc, client, deployer } = await loadFixture(deployFixture);
-      const deadline = BigInt(await time.latest()) + 3600n;
-
-      await manager.connect(deployer).setSelfServiceEnabled(true);
-
-      await expect(
-        manager.connect(client).createJob(
-          client.address,
-          ethers.ZeroAddress,
-          await usdc.getAddress(),
-          deadline
-        )
-      ).to.not.be.reverted;
     });
 
     it("should revert with SelfAssignment when evaluator == client", async function () {
@@ -584,21 +568,24 @@ describe("AgentJobManager", function () {
       const { manager, usdc, client, provider, evaluator, deployer } =
         await loadFixture(submittedJobFixture);
 
-      const providerBefore  = await usdc.balanceOf(provider.address);
-      const feeBefore       = await usdc.balanceOf(deployer.address);
+      const providerBefore   = await usdc.balanceOf(provider.address);
+      const evaluatorBefore  = await usdc.balanceOf(evaluator.address);
+      const treasuryBefore   = await usdc.balanceOf(deployer.address); // deployer == treasury
 
       await expect(manager.connect(evaluator).complete(1n, REASON))
         .to.emit(manager, "JobCompleted");
 
-      // feeRate=50 → fee = 5_000_000 * 50 / 10000 = 25000, payment = 4975000
-      const expectedFee     = FIVE_USDC * 50n / 10000n;
-      const expectedPayment = FIVE_USDC - expectedFee;
+      // feeRate=50 → fee = 5_000_000 * 50 / 10000 = 25_000, payment = 4_975_000
+      // evaluatorFee = fee * 8000 / 10000 = 20_000 (80%)
+      // treasuryFee  = fee - evaluatorFee  =  5_000 (20%)
+      const fee             = FIVE_USDC * 50n / 10000n;        // 25_000
+      const expectedPayment = FIVE_USDC - fee;                  // 4_975_000
+      const evaluatorFee    = fee * 8000n / 10000n;             // 20_000
+      const treasuryFee     = fee - evaluatorFee;               // 5_000
 
-      const providerAfter   = await usdc.balanceOf(provider.address);
-      const feeAfter        = await usdc.balanceOf(deployer.address);
-
-      expect(providerAfter - providerBefore).to.equal(expectedPayment);
-      expect(feeAfter - feeBefore).to.equal(expectedFee);
+      expect(await usdc.balanceOf(provider.address)  - providerBefore).to.equal(expectedPayment);
+      expect(await usdc.balanceOf(evaluator.address) - evaluatorBefore).to.equal(evaluatorFee);
+      expect(await usdc.balanceOf(deployer.address)  - treasuryBefore).to.equal(treasuryFee);
 
       const job = await manager.getJob(1n);
       expect(job.status).to.equal(JobStatus.Completed);
@@ -617,13 +604,18 @@ describe("AgentJobManager", function () {
       await manager.connect(client).fund(1n, budget);
       await manager.connect(provider).submit(1n, DELIVERABLE);
 
-      const providerBefore = await usdc.balanceOf(provider.address);
-      const feeBefore      = await usdc.balanceOf(deployer.address);
+      const providerBefore  = await usdc.balanceOf(provider.address);
+      const evaluatorBefore = await usdc.balanceOf(evaluator.address);
+      const treasuryBefore  = await usdc.balanceOf(deployer.address); // deployer == treasury
 
       await manager.connect(evaluator).complete(1n, REASON);
 
-      expect(await usdc.balanceOf(provider.address) - providerBefore).to.equal(995000n);
-      expect(await usdc.balanceOf(deployer.address) - feeBefore).to.equal(5000n);
+      // fee = 1_000_000 * 50 / 10_000 = 5_000, payment = 995_000
+      // evaluatorFee = 5_000 * 8_000 / 10_000 = 4_000 (80%)
+      // treasuryFee  = 5_000 - 4_000           = 1_000 (20%)
+      expect(await usdc.balanceOf(provider.address)  - providerBefore).to.equal(995000n);
+      expect(await usdc.balanceOf(evaluator.address) - evaluatorBefore).to.equal(4000n);
+      expect(await usdc.balanceOf(deployer.address)  - treasuryBefore).to.equal(1000n);
     });
 
     it("should not transfer to feeRecipient when feeRate=0", async function () {
@@ -728,8 +720,11 @@ describe("AgentJobManager", function () {
         .to.emit(manager, "JobRejected")
         .withArgs(1n, client.address, REASON);
 
+      // feeRate=50 → fee = FIVE_USDC * 50 / 10_000 = 25_000
+      // client refund = budget - fee = FIVE_USDC - 25_000
+      const fee     = FIVE_USDC * 50n / 10000n;
       const pending = await manager.getPendingRefund(client.address, await usdc.getAddress());
-      expect(pending).to.equal(FIVE_USDC);
+      expect(pending).to.equal(FIVE_USDC - fee);
     });
 
     it("should allow evaluator to reject a Submitted job and register refund", async function () {
@@ -739,8 +734,11 @@ describe("AgentJobManager", function () {
         .to.emit(manager, "JobRejected")
         .withArgs(1n, client.address, REASON);
 
+      // feeRate=50 → fee = FIVE_USDC * 50 / 10_000 = 25_000
+      // client refund = budget - fee = FIVE_USDC - 25_000
+      const fee     = FIVE_USDC * 50n / 10000n;
       const pending = await manager.getPendingRefund(client.address, await usdc.getAddress());
-      expect(pending).to.equal(FIVE_USDC);
+      expect(pending).to.equal(FIVE_USDC - fee);
     });
 
     it("should revert with NotAuthorized when client tries to reject a Funded job", async function () {
@@ -899,7 +897,10 @@ describe("AgentJobManager", function () {
       await manager.connect(client).claimRefund(await usdc.getAddress());
       const after = await usdc.balanceOf(client.address);
 
-      expect(after - before).to.equal(FIVE_USDC);
+      // feeRate=50 → fee = FIVE_USDC * 50 / 10_000 = 25_000
+      // client receives budget - fee (evaluator kept the fee on rejection)
+      const fee = FIVE_USDC * 50n / 10000n;
+      expect(after - before).to.equal(FIVE_USDC - fee);
 
       const pending = await manager.getPendingRefund(client.address, await usdc.getAddress());
       expect(pending).to.equal(0n);
@@ -923,8 +924,12 @@ describe("AgentJobManager", function () {
       await manager.connect(client).claimRefund(await usdc.getAddress());
       const after = await usdc.balanceOf(client.address);
 
-      // Gets both refunds: FIVE_USDC from job1 + budget2 from job2
-      expect(after - before).to.equal(FIVE_USDC + budget2);
+      // Both refunds are net of fees (feeRate=50 bps):
+      //   job1 refund = FIVE_USDC - (FIVE_USDC * 50 / 10_000)
+      //   job2 refund = budget2   - (budget2   * 50 / 10_000)
+      const fee1 = FIVE_USDC * 50n / 10000n;
+      const fee2 = budget2   * 50n / 10000n;
+      expect(after - before).to.equal((FIVE_USDC - fee1) + (budget2 - fee2));
     });
 
     it("should accumulate refunds from two rejected jobs", async function () {
@@ -947,14 +952,19 @@ describe("AgentJobManager", function () {
       await manager.connect(client).fund(2n, FIVE_USDC);
       await manager.connect(evaluator).reject(2n, REASON);
 
+      // feeRate=50 → fee per job = FIVE_USDC * 50 / 10_000 = 25_000
+      // each refund = FIVE_USDC - 25_000; total pending = 2 * (FIVE_USDC - 25_000)
+      const feePerJob = FIVE_USDC * 50n / 10000n;
+      const refundPerJob = FIVE_USDC - feePerJob;
+
       const pending = await manager.getPendingRefund(client.address, await usdc.getAddress());
-      expect(pending).to.equal(FIVE_USDC * 2n);
+      expect(pending).to.equal(refundPerJob * 2n);
 
       const before = await usdc.balanceOf(client.address);
       await manager.connect(client).claimRefund(await usdc.getAddress());
       const after = await usdc.balanceOf(client.address);
 
-      expect(after - before).to.equal(FIVE_USDC * 2n);
+      expect(after - before).to.equal(refundPerJob * 2n);
     });
 
     it("should revert with NothingToRefund when no pending balance", async function () {

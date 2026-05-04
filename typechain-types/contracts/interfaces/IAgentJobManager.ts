@@ -85,6 +85,7 @@ export interface IAgentJobManagerInterface extends Interface {
     nameOrSignatureOrTopic:
       | "BudgetSet"
       | "DeadlineExtended"
+      | "FeeDistributed"
       | "JobCompleted"
       | "JobCreated"
       | "JobExpired"
@@ -190,6 +191,31 @@ export namespace DeadlineExtendedEvent {
     jobId: bigint;
     oldDeadline: bigint;
     newDeadline: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace FeeDistributedEvent {
+  export type InputTuple = [
+    jobId: BigNumberish,
+    evaluator: AddressLike,
+    evaluatorFee: BigNumberish,
+    treasuryFee: BigNumberish
+  ];
+  export type OutputTuple = [
+    jobId: bigint,
+    evaluator: string,
+    evaluatorFee: bigint,
+    treasuryFee: bigint
+  ];
+  export interface OutputObject {
+    jobId: bigint;
+    evaluator: string;
+    evaluatorFee: bigint;
+    treasuryFee: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -542,6 +568,13 @@ export interface IAgentJobManager extends BaseContract {
     DeadlineExtendedEvent.OutputObject
   >;
   getEvent(
+    key: "FeeDistributed"
+  ): TypedContractEvent<
+    FeeDistributedEvent.InputTuple,
+    FeeDistributedEvent.OutputTuple,
+    FeeDistributedEvent.OutputObject
+  >;
+  getEvent(
     key: "JobCompleted"
   ): TypedContractEvent<
     JobCompletedEvent.InputTuple,
@@ -619,6 +652,17 @@ export interface IAgentJobManager extends BaseContract {
       DeadlineExtendedEvent.InputTuple,
       DeadlineExtendedEvent.OutputTuple,
       DeadlineExtendedEvent.OutputObject
+    >;
+
+    "FeeDistributed(uint256,address,uint256,uint256)": TypedContractEvent<
+      FeeDistributedEvent.InputTuple,
+      FeeDistributedEvent.OutputTuple,
+      FeeDistributedEvent.OutputObject
+    >;
+    FeeDistributed: TypedContractEvent<
+      FeeDistributedEvent.InputTuple,
+      FeeDistributedEvent.OutputTuple,
+      FeeDistributedEvent.OutputObject
     >;
 
     "JobCompleted(uint256,address,uint256,uint256)": TypedContractEvent<

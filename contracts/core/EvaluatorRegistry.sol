@@ -66,13 +66,18 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
     /// @notice Emitted when an evaluator unstakes tokens.
     event Unstaked(address indexed evaluator, uint256 amount, uint256 newTotal);
 
-    /// @notice Emitted when an evaluator is pseudo-randomly assigned to a job.
-    event EvaluatorAssigned(uint256 indexed jobId, address indexed evaluator);
-
     /// @notice Emitted when an evaluator is slashed by the job manager.
     /// @dev jobId is indexed so off-chain monitors can correlate a slash event with
     ///      the specific job that triggered it — useful for dispute tooling and ERC-8210 claims.
-    event EvaluatorSlashed(address indexed evaluator, uint256 indexed jobId, uint256 amount, uint256 remainingStake, bytes32 reason);
+    ///      remainingStake was removed from this event (forum ERC-8183, 2026-04-13): the field
+    ///      was redundant with EvaluatorStakeUpdated which carries both old and new balances.
+    event EvaluatorSlashed(address indexed evaluator, uint256 indexed jobId, uint256 amount, bytes32 reason);
+
+    /// @notice Emitted whenever an evaluator's staked balance changes (stake, unstake, or slash).
+    /// @dev Provides a single stream of balance-change events for indexers that track evaluator
+    ///      stake levels over time without having to join Staked/Unstaked/EvaluatorSlashed events.
+    ///      oldBalance and newBalance are the values BEFORE and AFTER the operation respectively.
+    event EvaluatorStakeUpdated(address indexed evaluator, uint256 oldBalance, uint256 newBalance);
 
     /// @notice Emitted when the owner updates the warmup period.
     event WarmupPeriodUpdated(uint64 newPeriod);
@@ -329,6 +334,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         // ProtocolToken has no fee-on-transfer logic, so the received amount equals `amount`
         // exactly. We can safely update state first without reading the post-transfer balance.
         Evaluator storage eval = evaluators[msg.sender];
+        uint256 oldBalance = eval.stakedAmount;
         eval.stakedAmount += amount;
 
         // Activate the evaluator if they cross the minimum threshold and are not yet active.
@@ -355,6 +361,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         protocolToken.safeTransferFrom(msg.sender, address(this), amount);
 
         emit Staked(msg.sender, amount, eval.stakedAmount);
+        emit EvaluatorStakeUpdated(msg.sender, oldBalance, eval.stakedAmount);
     }
 
     /**
@@ -384,6 +391,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         }
 
         // EFFECTS — update state before the token transfer (CEI)
+        uint256 oldBalance = eval.stakedAmount;
         eval.stakedAmount = remaining;
 
         if (eval.active && remaining < minEvaluatorStake) {
@@ -402,6 +410,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         protocolToken.safeTransfer(msg.sender, amount);
 
         emit Unstaked(msg.sender, amount, eval.stakedAmount);
+        emit EvaluatorStakeUpdated(msg.sender, oldBalance, eval.stakedAmount);
     }
 
     /// @notice Maximum number of re-draw attempts in assignEvaluator() before reverting.
@@ -441,7 +450,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
      * @param client   The job's client address — must NOT be selected as evaluator.
      * @return assigned The address of the selected evaluator.
      */
-    function assignEvaluator(uint256 jobId, address provider, address client) external onlyJobManager returns (address assigned) {
+    function assignEvaluator(uint256 jobId, address provider, address client) external view onlyJobManager returns (address assigned) {
         uint256 count = activeEvaluators.length;
         if (count == 0) revert NoEligibleEvaluators();
 
@@ -533,8 +542,6 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         // This is an extreme edge case (requires provider/client to collectively hold nearly
         // all warmed-up stake) but must be handled rather than silently assigning address(0).
         if (assigned == address(0)) revert EvaluatorAssignmentFailed(jobId, provider, client);
-
-        emit EvaluatorAssigned(jobId, assigned);
     }
 
     /**
@@ -564,6 +571,7 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         if (amount > eval.stakedAmount) revert SlashExceedsStake(amount, eval.stakedAmount);
 
         // EFFECTS — update state before burning (CEI)
+        uint256 oldBalance = eval.stakedAmount;
         eval.stakedAmount -= amount;
 
         if (eval.active && eval.stakedAmount < minEvaluatorStake) {
@@ -580,7 +588,8 @@ contract EvaluatorRegistry is ReentrancyGuard, Ownable {
         // so there is no external call that could trigger reentrancy back into us.
         protocolToken.burn(amount);
 
-        emit EvaluatorSlashed(evaluator, jobId, amount, eval.stakedAmount, reason);
+        emit EvaluatorSlashed(evaluator, jobId, amount, reason);
+        emit EvaluatorStakeUpdated(evaluator, oldBalance, eval.stakedAmount);
     }
 
     // ─── Admin functions ─────────────────────────────────────────────────────

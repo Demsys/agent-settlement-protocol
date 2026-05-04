@@ -158,6 +158,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ReputationBridge__factory>;
     getContractFactory(
+      name: "Treasury",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.Treasury__factory>;
+    getContractFactory(
       name: "IAgentJobManager",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IAgentJobManager__factory>;
@@ -355,6 +359,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.ReputationBridge>;
     getContractAt(
+      name: "Treasury",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.Treasury>;
+    getContractAt(
       name: "IAgentJobManager",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -520,6 +529,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReputationBridge>;
     deployContract(
+      name: "Treasury",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.Treasury>;
+    deployContract(
       name: "IAgentJobManager",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAgentJobManager>;
@@ -716,6 +729,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReputationBridge>;
+    deployContract(
+      name: "Treasury",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.Treasury>;
     deployContract(
       name: "IAgentJobManager",
       args: any[],
