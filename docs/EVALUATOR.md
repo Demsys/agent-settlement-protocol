@@ -42,7 +42,7 @@ Staking registers your wallet as an eligible evaluator and signals your particip
 3. Call `ProtocolToken.approve(EvaluatorRegistry, amount)` and wait for confirmation.
 4. Call `EvaluatorRegistry.stake(amount)` and wait for confirmation.
 
-**Warmup period:** After staking, your wallet enters a 24-hour warmup period on testnet before `isEligible()` returns `true`. During warmup the protocol will not assign jobs to your address.
+**Warmup period:** After staking, your wallet enters a warmup period before `isEligible()` returns `true`. During warmup the protocol will not assign jobs to your address. The current warmup period is set to **24 hours on testnet** (contract default is 7 days — reduced by governance for testnet bootstrapping). Check `EvaluatorRegistry.warmupPeriod()` for the live value.
 
 ```typescript
 const minStake = await registry.minEvaluatorStake()
