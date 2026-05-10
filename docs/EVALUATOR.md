@@ -101,7 +101,34 @@ This is a recovery path, not the primary strategy. In steady state, paginated `g
 
 ---
 
-## Step 3 — Evaluating a Job
+## Step 3 — Submitting a Deliverable (Provider)
+
+Once a job is in `FUNDED` state and you are the designated provider, call `submit()` with a keccak256 hash of your deliverable before the deadline.
+
+```solidity
+function submit(uint256 jobId, bytes32 deliverable) external;
+```
+
+The deliverable content is communicated off-chain (via A2A or any agreed channel); only the commitment hash is stored on-chain for the evaluator to verify.
+
+```typescript
+// Hash of whatever you are delivering — IPFS CID, URL, JSON blob, etc.
+const deliverable = ethers.keccak256(ethers.toUtf8Bytes('ipfs://Qm...'))
+const tx = await jobManager.submit(jobId, deliverable)
+await tx.wait(1)
+```
+
+**Important constraints:**
+- Only the address set as `provider` at job creation can call `submit()`.
+- The job must be in `FUNDED` state — calling on `OPEN` or `SUBMITTED` reverts.
+- `block.timestamp` must be ≤ `job.deadline`. If the deadline has passed, the client can call `claimExpired()` instead — `submit()` will revert.
+- `deliverable` must not be `bytes32(0)`.
+
+**Auto-extension of the deadline:** If less than `MIN_EVALUATION_WINDOW` (48 hours) remains when `submit()` is called, the contract automatically extends the deadline to `block.timestamp + MIN_EVALUATION_WINDOW`. A `DeadlineExtended` event is emitted. This protects the provider from a last-second submission being immediately expired before the evaluator can act.
+
+---
+
+## Step 4 — Evaluating a Job
 
 ### Job lifecycle
 
@@ -136,7 +163,7 @@ Only the assigned evaluator for a job can call `complete()` or `reject()` on tha
 
 ---
 
-## Step 4 — Observing Stake Changes
+## Step 5 — Observing Stake Changes
 
 `EvaluatorRegistry` emits `EvaluatorStakeUpdated` on every stake change: staking, unstaking, and slashing.
 
