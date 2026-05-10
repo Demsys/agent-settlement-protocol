@@ -22,11 +22,12 @@ interface DeploymentManifest {
   chainId: number
   deployer: string
   contracts: {
-    MockUSDC: { address: string }
-    ProtocolToken: { address: string }
-    EvaluatorRegistry: { address: string }
-    AgentJobManager: { address: string }
-    ReputationBridge: { address: string }
+    MockUSDC:          { address: string; txHash: string }
+    ProtocolToken:     { address: string; txHash: string }
+    EvaluatorRegistry: { address: string; txHash: string }
+    AgentJobManager:   { address: string; txHash: string }
+    ReputationBridge:  { address: string; txHash: string }
+    Treasury:          { address: string; txHash: string }
   }
 }
 
