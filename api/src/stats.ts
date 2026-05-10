@@ -1,5 +1,6 @@
-import { manifest, getJobManagerReadOnly, getEvaluatorRegistryReadOnly } from './contracts'
-import { readJobs, readAgents } from './storage'
+import { ethers } from 'ethers'
+import { provider, manifest, getJobManagerReadOnly, getEvaluatorRegistryReadOnly, JOB_STATUS_MAP, USDC_DECIMALS } from './contracts'
+import { readAgents } from './storage'
 
 // -------------------------------------------------------------------
 // Types
@@ -33,6 +34,69 @@ export interface StatsPayload {
 }
 
 // -------------------------------------------------------------------
+// On-chain job stats
+// -------------------------------------------------------------------
+
+const CHUNK_SIZE = 9_000
+
+// Cached deployment block — resolved once from the deploy tx receipt
+let deploymentBlock: number | null = null
+
+async function getDeploymentBlock(): Promise<number> {
+  if (deploymentBlock !== null) return deploymentBlock
+  const receipt = await provider.getTransactionReceipt(manifest.contracts.AgentJobManager.txHash)
+  if (!receipt) throw new Error('AgentJobManager deployment tx receipt not found')
+  deploymentBlock = receipt.blockNumber
+  return deploymentBlock
+}
+
+async function buildChainJobStats() {
+  const jobManager = getJobManagerReadOnly()
+  const [fromBlock, currentBlock] = await Promise.all([
+    getDeploymentBlock(),
+    provider.getBlockNumber(),
+  ])
+
+  // Collect all JobCreated event logs in 9000-block chunks (Base Sepolia RPC limit)
+  const jobIds = new Set<bigint>()
+  for (let start = fromBlock; start <= currentBlock; start += CHUNK_SIZE) {
+    const end = Math.min(start + CHUNK_SIZE - 1, currentBlock)
+    const logs = await jobManager.queryFilter(jobManager.filters.JobCreated(), start, end)
+    for (const log of logs as unknown as ethers.EventLog[]) {
+      jobIds.add(log.args.jobId as bigint)
+    }
+  }
+
+  // Fetch all job structs in parallel
+  const jobs = await Promise.all([...jobIds].map((id) => jobManager.getJob(id)))
+
+  // Aggregate by status
+  const byStatus: Record<string, number> = {
+    open: 0, funded: 0, submitted: 0, completed: 0, rejected: 0, expired: 0,
+  }
+  let totalBudgetRaw = 0n
+
+  for (const job of jobs) {
+    const statusStr = JOB_STATUS_MAP[Number(job.status)] ?? 'unknown'
+    byStatus[statusStr] = (byStatus[statusStr] ?? 0) + 1
+    // budget is zeroed on-chain after settlement — only active jobs contribute
+    totalBudgetRaw += job.budget
+  }
+
+  const settled = (byStatus.completed ?? 0) + (byStatus.rejected ?? 0) + (byStatus.expired ?? 0)
+  const completionRate = settled > 0
+    ? `${Math.round(((byStatus.completed ?? 0) / settled) * 100)}%`
+    : 'n/a'
+
+  return {
+    total: jobIds.size,
+    byStatus,
+    completionRate,
+    totalBudgetUsdc: (Number(totalBudgetRaw) / 10 ** USDC_DECIMALS).toFixed(2),
+  }
+}
+
+// -------------------------------------------------------------------
 // In-memory cache — avoids hammering the RPC on every dashboard refresh
 // -------------------------------------------------------------------
 
@@ -45,31 +109,15 @@ let cache: { data: StatsPayload; expiresAt: number } | null = null
 // -------------------------------------------------------------------
 
 async function buildStats(): Promise<StatsPayload> {
-  const [feeRateBigint, evaluatorCountBigint] = await Promise.all([
+  const [feeRateBigint, evaluatorCountBigint, chainJobStats, agents] = await Promise.all([
     getJobManagerReadOnly().getFeeRate(),
     getEvaluatorRegistryReadOnly().getEvaluatorCount(),
+    buildChainJobStats(),
+    Promise.resolve(readAgents()),
   ])
 
   const feeRateBps = Number(feeRateBigint)
   const evaluatorCount = Number(evaluatorCountBigint)
-
-  const jobs = readJobs()
-  const agents = readAgents()
-
-  // Count by status
-  const byStatus: Record<string, number> = {
-    open: 0, funded: 0, submitted: 0, completed: 0, rejected: 0, expired: 0,
-  }
-  let totalBudget = 0
-  for (const job of jobs) {
-    byStatus[job.status] = (byStatus[job.status] ?? 0) + 1
-    totalBudget += parseFloat(job.budget)
-  }
-
-  const settled = byStatus.completed + byStatus.rejected
-  const completionRate = settled > 0
-    ? `${Math.round((byStatus.completed / settled) * 100)}%`
-    : 'n/a'
 
   return {
     generatedAt: new Date().toISOString(),
@@ -87,12 +135,7 @@ async function buildStats(): Promise<StatsPayload> {
         mockUsdc:          manifest.contracts.MockUSDC.address,
       },
     },
-    jobs: {
-      total: jobs.length,
-      byStatus,
-      completionRate,
-      totalBudgetUsdc: totalBudget.toFixed(2),
-    },
+    jobs: chainJobStats,
     agents: {
       total: agents.length,
     },

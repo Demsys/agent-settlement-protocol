@@ -314,7 +314,7 @@ export function getDashboardHtml(apiBase: string, basescanBase: string): string 
       ['Chain ID',     p.chainId],
       ['Fee rate',     p.feeRatePercent + ' (' + p.feeRateBps + ' bps)'],
       ['Évaluateurs',  p.evaluatorCount + ' actif(s)'],
-      ['Jobs total',   j.total + ' (API)'],
+      ['Jobs total',   j.total + ' (on-chain)'],
     ].map(([k,v]) =>
       \`<div class="config-row"><span class="config-key">\${esc(k)}</span><span class="config-value">\${esc(v)}</span></div>\`
     ).join('')

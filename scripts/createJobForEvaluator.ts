@@ -26,7 +26,7 @@ async function main() {
     : { gasPrice: (fd.gasPrice ?? 1_000_000_000n) * 2n }
 
   const budgetWei  = ethers.parseUnits(budgetUSDC, 6)
-  const deadline   = BigInt(Math.floor(Date.now() / 1000) + 2 * 60 * 60) // 2h
+  const deadline   = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60) // 7 days
 
   // createJob with explicit evaluator
   console.log(`Creating job — provider: ${providerAddr}, evaluator: ${evaluatorAddr}, budget: ${budgetUSDC} USDC`)
