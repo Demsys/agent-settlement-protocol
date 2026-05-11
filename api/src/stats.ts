@@ -37,7 +37,9 @@ export interface StatsPayload {
 // On-chain job stats
 // -------------------------------------------------------------------
 
-const CHUNK_SIZE = 9_000
+// The public Base Sepolia RPC (sepolia.base.org) enforces a 2000-block
+// limit on eth_getLogs. Private nodes (Alchemy, QuickNode) allow up to 9000.
+const CHUNK_SIZE = 2_000
 
 // Cached deployment block — resolved once from the deploy tx receipt
 let deploymentBlock: number | null = null
