@@ -69,8 +69,11 @@ async function buildChainJobStats() {
     }
   }
 
-  // Fetch all job structs in parallel
-  const jobs = await Promise.all([...jobIds].map((id) => jobManager.getJob(id)))
+  // Fetch job structs sequentially to avoid bursting the public RPC rate limit
+  const jobs = []
+  for (const id of jobIds) {
+    jobs.push(await jobManager.getJob(id))
+  }
 
   // Aggregate by status
   const byStatus: Record<string, number> = {
@@ -102,7 +105,9 @@ async function buildChainJobStats() {
 // In-memory cache — avoids hammering the RPC on every dashboard refresh
 // -------------------------------------------------------------------
 
-const CACHE_TTL_MS = 30_000
+// 5 minutes — reduces RPC pressure on the public Base Sepolia endpoint.
+// Switch to 30_000 if using a private RPC (Alchemy / QuickNode).
+const CACHE_TTL_MS = 5 * 60_000
 
 let cache: { data: StatsPayload; expiresAt: number } | null = null
 
