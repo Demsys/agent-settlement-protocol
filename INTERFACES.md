@@ -136,6 +136,23 @@ Share of the protocol fee paid to the assigned evaluator on `complete()`. The re
 
 ### State variables
 
+#### `evaluationFee`
+
+```solidity
+uint128 public evaluationFee;
+```
+
+Fixed fee per evaluation in token decimals. When `> 0`, replaces the proportional fee (`budget * feeRate / 10_000`) with a flat amount charged regardless of job budget. Capped at `budget` so the provider's refund never underflows. When `0` (default), proportional mode is active.
+
+**Rationale:** Proportional fees produce near-zero evaluator income on small jobs (e.g. 1 USDC × 0.5% × 80% = 0.004 USDC — below Base L2 gas cost for the evaluate tx). A fixed fee (e.g. 0.50 USDC) guarantees gas coverage and reduces Sybil surface.
+
+Governed via `proposeEvaluationFee()` / `executeEvaluationFee()` with `GOVERNANCE_DELAY` (2 days).
+
+**History:**
+- Added 2026-05-13 — pre-mainnet milestone.
+
+---
+
 #### `treasury` (replaces `feeRecipient`)
 
 ```solidity
@@ -195,16 +212,28 @@ Emitted in **both `complete()` and `reject()`** whenever the gross fee is non-ze
 | `COMPLETED` | `budget - fee` | `fee * 80%` | `fee * 20%` | — |
 | `REJECTED` | — | `fee * 80%` | `fee * 20%` | `budget - fee` |
 
-`fee          = budget * feeRate / 10_000`
+`fee          = evaluationFee > 0 ? min(evaluationFee, budget) : budget * feeRate / 10_000`
 `evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000`
 `treasuryFee  = fee - evaluatorFee`
 
 Rounding: integer division truncates toward zero on `evaluatorFee`; the remainder goes to `treasuryFee` (favors the treasury by at most 1 token unit).
 
-**Note — fixed fee deferred:** The tokenomics model targets a fixed fee per evaluation (not proportional to budget) to further reduce Sybil incentive. The proportional model is used for the initial deployment for simplicity. The fixed-fee mechanic is a pre-mainnet milestone.
-
 **History:**
 - Added 2026-04-26 — emitted on both `complete()` and `reject()` to align evaluator incentives with verdict independence.
+
+---
+
+#### `EvaluationFeeProposed` / `EvaluationFeeUpdated`
+
+```solidity
+event EvaluationFeeProposed(uint128 oldFee, uint128 newFee, uint256 executableAt);
+event EvaluationFeeUpdated(uint128 oldFee, uint128 newFee);
+```
+
+Emitted by `proposeEvaluationFee()` (step 1) and `executeEvaluationFee()` (step 2) respectively. Same 2-day governance pattern as `FeeRateProposed` / `FeeRateUpdated`.
+
+**History:**
+- Added 2026-05-13 alongside the `evaluationFee` state variable.
 
 ---
 
