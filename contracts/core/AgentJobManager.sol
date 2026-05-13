@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 // ─── OpenZeppelin imports ────────────────────────────────────────────────────
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 // ─── Internal imports ────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ interface IReputationBridge {
  *
  *      Security guarantees:
  *      - All fund-moving functions follow Checks-Effects-Interactions (CEI)
- *      - All fund-moving functions are protected by ReentrancyGuard
+ *      - All fund-moving functions are protected by ReentrancyGuardTransient (EIP-1153)
  *      - All token transfers use SafeERC20 (handles non-standard ERC-20s like USDT)
  *      - Refunds use Pull over Push to prevent griefing
  *      - Fee rounding always favors the Provider (truncation toward zero)
@@ -65,10 +65,13 @@ interface IReputationBridge {
  *        burn fees (FINDING-003 fix)
  *
  * @custom:security This contract holds user funds. It has been designed with
- *                  defense-in-depth: ReentrancyGuard + CEI + budget zeroing
+ *                  defense-in-depth: ReentrancyGuardTransient (EIP-1153) + CEI + budget zeroing
  *                  before transfers. Do not remove any of these layers.
+ *                  ReentrancyGuardTransient uses transient storage (TSTORE/TLOAD) which
+ *                  is reset at the end of each transaction, saving ~2000 gas vs the
+ *                  persistent-storage variant. Requires EVM Cancun (Base mainnet: Ecotone upgrade).
  */
-contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
+contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable {
     using SafeERC20 for IERC20;
 
     // ─── Constants ────────────────────────────────────────────────────────────
@@ -147,6 +150,18 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
     /// @dev Governed by the owner (DAO post-launch). Bounded by MAX_FEE_RATE.
     ///      Changes go through a propose/execute pattern with GOVERNANCE_DELAY.
     uint256 public feeRate;
+
+    /// @notice Fixed fee per evaluation in token decimals (0 = use proportional feeRate).
+    /// @dev When non-zero, replaces the proportional fee (budget * feeRate / 10_000) with
+    ///      a flat amount per evaluation. This resolves two issues with the proportional model:
+    ///      1. Gas coverage on small jobs: a 1 USDC job at 0.5% yields 0.005 USDC evaluator fee
+    ///         — below Base L2 gas costs for the evaluate tx.
+    ///      2. Sybil surface: fixed fee makes it uneconomical to spam micro-jobs to drain
+    ///         evaluator gas without a meaningful protocol fee.
+    ///      The fixed fee is still split 80/20 (evaluator/treasury) via EVALUATOR_SHARE_BPS.
+    ///      If evaluationFee > budget, it is capped to budget (evaluator takes all, no payment
+    ///      to provider). Fee governance follows the same propose/execute pattern with GOVERNANCE_DELAY.
+    uint128 public evaluationFee;
 
     /// @notice Address of the Treasury contract that receives the protocol's share of fees.
     /// @dev Validated non-zero at construction (FINDING-003). The Treasury contract
@@ -658,7 +673,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      *      (3) Interactions: safeTransfer to provider, safeTransfer to treasury (20% of fee),
      *          safeTransfer to evaluator (80% of fee), then optional call to ReputationBridge
      *          (treasury is transferred first — it is a trusted contract; evaluator is external)
-     *      Fee calculation: fee = budget * feeRate / 10_000
+     *      Fee calculation: see _computeFee() — either fixed (evaluationFee) or proportional (feeRate)
      *      Fee split: evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000 (80%)
      *                 treasuryFee  = fee - evaluatorFee (20%, gets rounding remainder)
      *      Rounding: fee and evaluatorFee both truncate toward zero. treasuryFee = fee - evaluatorFee
@@ -689,10 +704,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
         uint256 budget     = job.budget;
 
         // Compute fee split BEFORE zeroing budget.
-        // Multiply before dividing to avoid precision loss (Pattern 6 in security spec).
-        // Rounding: fee is truncated (rounds down), payment gets the remainder.
-        // This intentionally favors the Provider — the protocol takes no more than its share.
-        uint256 fee     = budget * feeRate / 10_000;
+        uint256 fee     = _computeFee(budget);
         uint256 payment = budget - fee;
 
         job.status  = JobStatus.Completed;
@@ -821,7 +833,7 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
             // Charging a fee on rejection aligns incentives: evaluators are compensated for work,
             // not just for approvals. Clients bear the full cost of a job that was rejected after
             // evaluation, incentivizing them to define clear acceptance criteria upfront.
-            fee          = budget * feeRate / 10_000;
+            fee          = _computeFee(budget);
             evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000;
             treasuryFee  = fee - evaluatorFee;
             clientRefund = budget - fee;
@@ -1344,5 +1356,59 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuard, Ownable {
      */
     function getPendingRefund(address client, address token) external view returns (uint256) {
         return pendingRefunds[client][token];
+    }
+
+    // ── Governance timelock: evaluationFee ────────────────────────────────────
+
+    /**
+     * @notice Step 1 of 2 — proposes a new fixed evaluation fee.
+     * @dev Set to 0 to revert to proportional mode (budget * feeRate / 10_000).
+     *      Follows the same propose/execute pattern with GOVERNANCE_DELAY as feeRate.
+     * @param newFee Fixed fee in token decimals (e.g. 500_000 = 0.50 USDC). Pass 0 to disable.
+     */
+    function proposeEvaluationFee(uint128 newFee) external onlyOwner {
+        bytes32 key = keccak256("evaluationFee");
+        uint256 executableAt = block.timestamp + GOVERNANCE_DELAY;
+        pendingChanges[key] = PendingChange({
+            valueHash:    keccak256(abi.encode(newFee)),
+            executableAt: executableAt
+        });
+        emit EvaluationFeeProposed(evaluationFee, newFee, executableAt);
+    }
+
+    /**
+     * @notice Step 2 of 2 — executes a proposed evaluation fee change after GOVERNANCE_DELAY.
+     * @param newFee Must match the value passed to the corresponding proposeEvaluationFee().
+     */
+    function executeEvaluationFee(uint128 newFee) external onlyOwner {
+        bytes32 key = keccak256("evaluationFee");
+        PendingChange storage p = pendingChanges[key];
+        if (p.executableAt == 0) revert NoProposalPending(key);
+        if (block.timestamp < p.executableAt) revert GovernanceDelayNotElapsed(p.executableAt);
+        if (p.valueHash != keccak256(abi.encode(newFee))) revert ProposalValueMismatch();
+        delete pendingChanges[key];
+        uint128 oldFee = evaluationFee;
+        evaluationFee = newFee;
+        emit EvaluationFeeUpdated(oldFee, newFee);
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────────────
+
+    /**
+     * @notice Computes the protocol fee for a given budget.
+     * @dev When evaluationFee > 0: fixed fee, capped at budget (so provider refund >= 0).
+     *      When evaluationFee == 0: proportional (budget * feeRate / 10_000).
+     *      Rounding always truncates toward zero, favoring the Provider.
+     * @param budget The job budget in token decimals (already read from storage before zeroing).
+     * @return fee The gross protocol fee to split 80/20 between evaluator and treasury.
+     */
+    function _computeFee(uint256 budget) internal view returns (uint256 fee) {
+        if (evaluationFee > 0) {
+            // Fixed fee: cap at budget so provider payment never underflows.
+            fee = evaluationFee > budget ? budget : evaluationFee;
+        } else {
+            // Proportional fee: multiply before dividing to preserve precision.
+            fee = budget * feeRate / 10_000;
+        }
     }
 }

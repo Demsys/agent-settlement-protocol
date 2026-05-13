@@ -155,6 +155,16 @@ interface IAgentJobManager {
     );
 
     /**
+     * @notice Emitted when a new fixed evaluation fee is proposed (step 1 of governance).
+     */
+    event EvaluationFeeProposed(uint128 oldFee, uint128 newFee, uint256 executableAt);
+
+    /**
+     * @notice Emitted when a pending evaluation fee change is executed (step 2 of governance).
+     */
+    event EvaluationFeeUpdated(uint128 oldFee, uint128 newFee);
+
+    /**
      * @notice Emitted when the deadline of a job is extended.
      * @dev Emitted in two contexts:
      *      1. When the Client calls extendDeadline() on a Funded job (voluntary extension).
@@ -376,6 +386,14 @@ interface IAgentJobManager {
      * @return Fee rate in basis points.
      */
     function getFeeRate() external view returns (uint256);
+
+    /**
+     * @notice Returns the current fixed evaluation fee in token decimals.
+     * @dev 0 means proportional mode (budget * feeRate / 10_000) is active.
+     *      Non-zero means a flat fee per evaluation regardless of job budget.
+     * @return Fixed fee in token decimals (e.g. 500_000 = 0.50 USDC with 6 decimals).
+     */
+    function evaluationFee() external view returns (uint128);
 
     /**
      * @notice Returns the pending refund balance for a given (client, token) pair.

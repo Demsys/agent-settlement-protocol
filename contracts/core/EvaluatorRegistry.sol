@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 // ─── OpenZeppelin imports ────────────────────────────────────────────────────
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 // ─── Internal imports ────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ import "../token/ProtocolToken.sol";
  *                  it controls who can validate jobs. All mutating functions
  *                  are protected by ReentrancyGuard and follow the CEI pattern.
  */
-contract EvaluatorRegistry is ReentrancyGuard, Ownable {
+contract EvaluatorRegistry is ReentrancyGuardTransient, Ownable {
     using SafeERC20 for ProtocolToken;
 
     // ─── Types ────────────────────────────────────────────────────────────────
