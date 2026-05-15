@@ -207,6 +207,50 @@ const _abi = [
     anonymous: false,
     inputs: [
       {
+        indexed: false,
+        internalType: "uint128",
+        name: "oldFee",
+        type: "uint128",
+      },
+      {
+        indexed: false,
+        internalType: "uint128",
+        name: "newFee",
+        type: "uint128",
+      },
+      {
+        indexed: false,
+        internalType: "uint256",
+        name: "executableAt",
+        type: "uint256",
+      },
+    ],
+    name: "EvaluationFeeProposed",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: false,
+        internalType: "uint128",
+        name: "oldFee",
+        type: "uint128",
+      },
+      {
+        indexed: false,
+        internalType: "uint128",
+        name: "newFee",
+        type: "uint128",
+      },
+    ],
+    name: "EvaluationFeeUpdated",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
         indexed: true,
         internalType: "uint256",
         name: "jobId",
@@ -516,6 +560,19 @@ const _abi = [
       },
     ],
     stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "evaluationFee",
+    outputs: [
+      {
+        internalType: "uint128",
+        name: "",
+        type: "uint128",
+      },
+    ],
+    stateMutability: "view",
     type: "function",
   },
   {

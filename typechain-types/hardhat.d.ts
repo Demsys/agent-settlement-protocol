@@ -126,6 +126,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ReentrancyGuard__factory>;
     getContractFactory(
+      name: "ReentrancyGuardTransient",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.ReentrancyGuardTransient__factory>;
+    getContractFactory(
       name: "ShortStrings",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ShortStrings__factory>;
@@ -319,6 +323,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.ReentrancyGuard>;
     getContractAt(
+      name: "ReentrancyGuardTransient",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.ReentrancyGuardTransient>;
+    getContractAt(
       name: "ShortStrings",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -497,6 +506,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
     deployContract(
+      name: "ReentrancyGuardTransient",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.ReentrancyGuardTransient>;
+    deployContract(
       name: "ShortStrings",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ShortStrings>;
@@ -689,6 +702,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
+    deployContract(
+      name: "ReentrancyGuardTransient",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.ReentrancyGuardTransient>;
     deployContract(
       name: "ShortStrings",
       args: any[],

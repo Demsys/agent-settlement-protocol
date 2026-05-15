@@ -83,7 +83,9 @@ export interface AgentJobManagerInterface extends Interface {
       | "complete"
       | "createJob"
       | "disallowToken"
+      | "evaluationFee"
       | "evaluatorRegistry"
+      | "executeEvaluationFee"
       | "executeFeeRate"
       | "executeReputationBridge"
       | "executeTreasury"
@@ -94,6 +96,7 @@ export interface AgentJobManagerInterface extends Interface {
       | "getJob"
       | "getPendingRefund"
       | "owner"
+      | "proposeEvaluationFee"
       | "proposeFeeRate"
       | "proposeReputationBridge"
       | "proposeTreasury"
@@ -111,6 +114,8 @@ export interface AgentJobManagerInterface extends Interface {
     nameOrSignatureOrTopic:
       | "BudgetSet"
       | "DeadlineExtended"
+      | "EvaluationFeeProposed"
+      | "EvaluationFeeUpdated"
       | "EvaluatorAssigned"
       | "FeeDistributed"
       | "FeeRateProposed"
@@ -195,8 +200,16 @@ export interface AgentJobManagerInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "evaluationFee",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "evaluatorRegistry",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "executeEvaluationFee",
+    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "executeFeeRate",
@@ -232,6 +245,10 @@ export interface AgentJobManagerInterface extends Interface {
     values: [AddressLike, AddressLike]
   ): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
+  encodeFunctionData(
+    functionFragment: "proposeEvaluationFee",
+    values: [BigNumberish]
+  ): string;
   encodeFunctionData(
     functionFragment: "proposeFeeRate",
     values: [BigNumberish]
@@ -323,7 +340,15 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "evaluationFee",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "evaluatorRegistry",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "executeEvaluationFee",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -351,6 +376,10 @@ export interface AgentJobManagerInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "proposeEvaluationFee",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "proposeFeeRate",
     data: BytesLike
@@ -410,6 +439,41 @@ export namespace DeadlineExtendedEvent {
     jobId: bigint;
     oldDeadline: bigint;
     newDeadline: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EvaluationFeeProposedEvent {
+  export type InputTuple = [
+    oldFee: BigNumberish,
+    newFee: BigNumberish,
+    executableAt: BigNumberish
+  ];
+  export type OutputTuple = [
+    oldFee: bigint,
+    newFee: bigint,
+    executableAt: bigint
+  ];
+  export interface OutputObject {
+    oldFee: bigint;
+    newFee: bigint;
+    executableAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EvaluationFeeUpdatedEvent {
+  export type InputTuple = [oldFee: BigNumberish, newFee: BigNumberish];
+  export type OutputTuple = [oldFee: bigint, newFee: bigint];
+  export interface OutputObject {
+    oldFee: bigint;
+    newFee: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -856,7 +920,15 @@ export interface AgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
+  evaluationFee: TypedContractMethod<[], [bigint], "view">;
+
   evaluatorRegistry: TypedContractMethod<[], [string], "view">;
+
+  executeEvaluationFee: TypedContractMethod<
+    [newFee: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   executeFeeRate: TypedContractMethod<
     [newFeeRate: BigNumberish],
@@ -905,6 +977,12 @@ export interface AgentJobManager extends BaseContract {
   >;
 
   owner: TypedContractMethod<[], [string], "view">;
+
+  proposeEvaluationFee: TypedContractMethod<
+    [newFee: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   proposeFeeRate: TypedContractMethod<
     [newFeeRate: BigNumberish],
@@ -1023,8 +1101,14 @@ export interface AgentJobManager extends BaseContract {
     nameOrSignature: "disallowToken"
   ): TypedContractMethod<[token: AddressLike], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "evaluationFee"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "evaluatorRegistry"
   ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "executeEvaluationFee"
+  ): TypedContractMethod<[newFee: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "executeFeeRate"
   ): TypedContractMethod<[newFeeRate: BigNumberish], [void], "nonpayable">;
@@ -1071,6 +1155,9 @@ export interface AgentJobManager extends BaseContract {
   getFunction(
     nameOrSignature: "owner"
   ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "proposeEvaluationFee"
+  ): TypedContractMethod<[newFee: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "proposeFeeRate"
   ): TypedContractMethod<[newFeeRate: BigNumberish], [void], "nonpayable">;
@@ -1134,6 +1221,20 @@ export interface AgentJobManager extends BaseContract {
     DeadlineExtendedEvent.InputTuple,
     DeadlineExtendedEvent.OutputTuple,
     DeadlineExtendedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EvaluationFeeProposed"
+  ): TypedContractEvent<
+    EvaluationFeeProposedEvent.InputTuple,
+    EvaluationFeeProposedEvent.OutputTuple,
+    EvaluationFeeProposedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EvaluationFeeUpdated"
+  ): TypedContractEvent<
+    EvaluationFeeUpdatedEvent.InputTuple,
+    EvaluationFeeUpdatedEvent.OutputTuple,
+    EvaluationFeeUpdatedEvent.OutputObject
   >;
   getEvent(
     key: "EvaluatorAssigned"
@@ -1304,6 +1405,28 @@ export interface AgentJobManager extends BaseContract {
       DeadlineExtendedEvent.InputTuple,
       DeadlineExtendedEvent.OutputTuple,
       DeadlineExtendedEvent.OutputObject
+    >;
+
+    "EvaluationFeeProposed(uint128,uint128,uint256)": TypedContractEvent<
+      EvaluationFeeProposedEvent.InputTuple,
+      EvaluationFeeProposedEvent.OutputTuple,
+      EvaluationFeeProposedEvent.OutputObject
+    >;
+    EvaluationFeeProposed: TypedContractEvent<
+      EvaluationFeeProposedEvent.InputTuple,
+      EvaluationFeeProposedEvent.OutputTuple,
+      EvaluationFeeProposedEvent.OutputObject
+    >;
+
+    "EvaluationFeeUpdated(uint128,uint128)": TypedContractEvent<
+      EvaluationFeeUpdatedEvent.InputTuple,
+      EvaluationFeeUpdatedEvent.OutputTuple,
+      EvaluationFeeUpdatedEvent.OutputObject
+    >;
+    EvaluationFeeUpdated: TypedContractEvent<
+      EvaluationFeeUpdatedEvent.InputTuple,
+      EvaluationFeeUpdatedEvent.OutputTuple,
+      EvaluationFeeUpdatedEvent.OutputObject
     >;
 
     "EvaluatorAssigned(uint256,address)": TypedContractEvent<

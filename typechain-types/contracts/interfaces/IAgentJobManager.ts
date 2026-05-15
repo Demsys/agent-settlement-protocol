@@ -72,6 +72,7 @@ export interface IAgentJobManagerInterface extends Interface {
       | "claimRefund"
       | "complete"
       | "createJob"
+      | "evaluationFee"
       | "fund"
       | "getFeeRate"
       | "getJob"
@@ -85,6 +86,8 @@ export interface IAgentJobManagerInterface extends Interface {
     nameOrSignatureOrTopic:
       | "BudgetSet"
       | "DeadlineExtended"
+      | "EvaluationFeeProposed"
+      | "EvaluationFeeUpdated"
       | "FeeDistributed"
       | "JobCompleted"
       | "JobCreated"
@@ -111,6 +114,10 @@ export interface IAgentJobManagerInterface extends Interface {
   encodeFunctionData(
     functionFragment: "createJob",
     values: [AddressLike, AddressLike, AddressLike, BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "evaluationFee",
+    values?: undefined
   ): string;
   encodeFunctionData(
     functionFragment: "fund",
@@ -151,6 +158,10 @@ export interface IAgentJobManagerInterface extends Interface {
   ): Result;
   decodeFunctionResult(functionFragment: "complete", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "createJob", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "evaluationFee",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "fund", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "getFeeRate", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "getJob", data: BytesLike): Result;
@@ -191,6 +202,41 @@ export namespace DeadlineExtendedEvent {
     jobId: bigint;
     oldDeadline: bigint;
     newDeadline: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EvaluationFeeProposedEvent {
+  export type InputTuple = [
+    oldFee: BigNumberish,
+    newFee: BigNumberish,
+    executableAt: BigNumberish
+  ];
+  export type OutputTuple = [
+    oldFee: bigint,
+    newFee: bigint,
+    executableAt: bigint
+  ];
+  export interface OutputObject {
+    oldFee: bigint;
+    newFee: bigint;
+    executableAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EvaluationFeeUpdatedEvent {
+  export type InputTuple = [oldFee: BigNumberish, newFee: BigNumberish];
+  export type OutputTuple = [oldFee: bigint, newFee: bigint];
+  export interface OutputObject {
+    oldFee: bigint;
+    newFee: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -440,6 +486,8 @@ export interface IAgentJobManager extends BaseContract {
     "nonpayable"
   >;
 
+  evaluationFee: TypedContractMethod<[], [bigint], "view">;
+
   fund: TypedContractMethod<
     [jobId: BigNumberish, expectedBudget: BigNumberish],
     [void],
@@ -508,6 +556,9 @@ export interface IAgentJobManager extends BaseContract {
     "nonpayable"
   >;
   getFunction(
+    nameOrSignature: "evaluationFee"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "fund"
   ): TypedContractMethod<
     [jobId: BigNumberish, expectedBudget: BigNumberish],
@@ -566,6 +617,20 @@ export interface IAgentJobManager extends BaseContract {
     DeadlineExtendedEvent.InputTuple,
     DeadlineExtendedEvent.OutputTuple,
     DeadlineExtendedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EvaluationFeeProposed"
+  ): TypedContractEvent<
+    EvaluationFeeProposedEvent.InputTuple,
+    EvaluationFeeProposedEvent.OutputTuple,
+    EvaluationFeeProposedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EvaluationFeeUpdated"
+  ): TypedContractEvent<
+    EvaluationFeeUpdatedEvent.InputTuple,
+    EvaluationFeeUpdatedEvent.OutputTuple,
+    EvaluationFeeUpdatedEvent.OutputObject
   >;
   getEvent(
     key: "FeeDistributed"
@@ -652,6 +717,28 @@ export interface IAgentJobManager extends BaseContract {
       DeadlineExtendedEvent.InputTuple,
       DeadlineExtendedEvent.OutputTuple,
       DeadlineExtendedEvent.OutputObject
+    >;
+
+    "EvaluationFeeProposed(uint128,uint128,uint256)": TypedContractEvent<
+      EvaluationFeeProposedEvent.InputTuple,
+      EvaluationFeeProposedEvent.OutputTuple,
+      EvaluationFeeProposedEvent.OutputObject
+    >;
+    EvaluationFeeProposed: TypedContractEvent<
+      EvaluationFeeProposedEvent.InputTuple,
+      EvaluationFeeProposedEvent.OutputTuple,
+      EvaluationFeeProposedEvent.OutputObject
+    >;
+
+    "EvaluationFeeUpdated(uint128,uint128)": TypedContractEvent<
+      EvaluationFeeUpdatedEvent.InputTuple,
+      EvaluationFeeUpdatedEvent.OutputTuple,
+      EvaluationFeeUpdatedEvent.OutputObject
+    >;
+    EvaluationFeeUpdated: TypedContractEvent<
+      EvaluationFeeUpdatedEvent.InputTuple,
+      EvaluationFeeUpdatedEvent.OutputTuple,
+      EvaluationFeeUpdatedEvent.OutputObject
     >;
 
     "FeeDistributed(uint256,address,uint256,uint256)": TypedContractEvent<

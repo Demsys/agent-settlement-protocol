@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import type {
   AgentJobManager,
   EvaluatorRegistry,
@@ -1177,6 +1178,274 @@ describe("AgentJobManager", function () {
   });
 
   // ── Invariants ─────────────────────────────────────────────────────────────
+
+  // ── evaluationFee governance + fixed-fee mode ──────────────────────────────
+
+  describe("evaluationFee", function () {
+
+    // Shared fixture: a Submitted job with 5 USDC budget, ready for complete()/reject()
+    async function submittedJobFixture() {
+      const base = await deployFixture();
+      const { manager, usdc, client, provider, evaluator } = base;
+      await createExplicitJob(manager, client, provider.address, evaluator.address, await usdc.getAddress());
+      await manager.connect(client).setBudget(1n, FIVE_USDC);
+      await usdc.mint(client.address, FIVE_USDC);
+      await usdc.connect(client).approve(await manager.getAddress(), FIVE_USDC);
+      await manager.connect(client).fund(1n, FIVE_USDC);
+      await manager.connect(provider).submit(1n, DELIVERABLE);
+      return base;
+    }
+
+    // ── proposeEvaluationFee ──────────────────────────────────────────────────
+
+    describe("proposeEvaluationFee", function () {
+
+      it("should emit EvaluationFeeProposed with correct args", async function () {
+        const { manager, deployer } = await loadFixture(deployFixture);
+        const newFee = 500_000n; // 0.50 USDC
+
+        await expect(manager.connect(deployer).proposeEvaluationFee(newFee))
+          .to.emit(manager, "EvaluationFeeProposed")
+          .withArgs(0n, newFee, anyValue);
+      });
+
+      it("should revert with OwnableUnauthorizedAccount when stranger proposes", async function () {
+        const { manager, stranger } = await loadFixture(deployFixture);
+        await expect(manager.connect(stranger).proposeEvaluationFee(500_000n))
+          .to.be.revertedWithCustomError(manager, "OwnableUnauthorizedAccount");
+      });
+
+    });
+
+    // ── executeEvaluationFee ──────────────────────────────────────────────────
+
+    describe("executeEvaluationFee", function () {
+
+      it("should update evaluationFee and emit EvaluationFeeUpdated after delay", async function () {
+        const { manager, deployer } = await loadFixture(deployFixture);
+        const newFee = 500_000n;
+
+        await manager.connect(deployer).proposeEvaluationFee(newFee);
+        await time.increase(GOVERNANCE_DELAY + 1);
+
+        await expect(manager.connect(deployer).executeEvaluationFee(newFee))
+          .to.emit(manager, "EvaluationFeeUpdated")
+          .withArgs(0n, newFee);
+
+        expect(await manager.evaluationFee()).to.equal(newFee);
+      });
+
+      it("should revert with NoProposalPending when no proposal exists", async function () {
+        const { manager, deployer } = await loadFixture(deployFixture);
+        const key = ethers.keccak256(ethers.toUtf8Bytes("evaluationFee"));
+
+        await expect(manager.connect(deployer).executeEvaluationFee(500_000n))
+          .to.be.revertedWithCustomError(manager, "NoProposalPending")
+          .withArgs(key);
+      });
+
+      it("should revert with GovernanceDelayNotElapsed before delay expires", async function () {
+        const { manager, deployer } = await loadFixture(deployFixture);
+
+        await manager.connect(deployer).proposeEvaluationFee(500_000n);
+        await time.increase(GOVERNANCE_DELAY - 10); // still 10 seconds short
+
+        await expect(manager.connect(deployer).executeEvaluationFee(500_000n))
+          .to.be.revertedWithCustomError(manager, "GovernanceDelayNotElapsed");
+      });
+
+      it("should revert with ProposalValueMismatch when value does not match proposal", async function () {
+        const { manager, deployer } = await loadFixture(deployFixture);
+
+        await manager.connect(deployer).proposeEvaluationFee(500_000n);
+        await time.increase(GOVERNANCE_DELAY + 1);
+
+        await expect(manager.connect(deployer).executeEvaluationFee(999_999n))
+          .to.be.revertedWithCustomError(manager, "ProposalValueMismatch");
+      });
+
+      it("should allow setting evaluationFee back to 0 (revert to proportional mode)", async function () {
+        const { manager, deployer } = await loadFixture(deployFixture);
+
+        // Set to non-zero
+        await manager.connect(deployer).proposeEvaluationFee(500_000n);
+        await time.increase(GOVERNANCE_DELAY + 1);
+        await manager.connect(deployer).executeEvaluationFee(500_000n);
+
+        // Reset to zero
+        await manager.connect(deployer).proposeEvaluationFee(0n);
+        await time.increase(GOVERNANCE_DELAY + 1);
+        await manager.connect(deployer).executeEvaluationFee(0n);
+
+        expect(await manager.evaluationFee()).to.equal(0n);
+      });
+
+      it("should revert with OwnableUnauthorizedAccount when stranger executes", async function () {
+        const { manager, deployer, stranger } = await loadFixture(deployFixture);
+
+        await manager.connect(deployer).proposeEvaluationFee(500_000n);
+        await time.increase(GOVERNANCE_DELAY + 1);
+
+        await expect(manager.connect(stranger).executeEvaluationFee(500_000n))
+          .to.be.revertedWithCustomError(manager, "OwnableUnauthorizedAccount");
+      });
+
+    });
+
+    // ── fixed-fee mode: complete() ────────────────────────────────────────────
+
+    describe("fixed-fee mode in complete()", function () {
+
+      async function fixedFeeFixture() {
+        const base = await submittedJobFixture();
+        const { manager, deployer } = base;
+        // Set evaluationFee = 1 USDC (1_000_000 units)
+        await manager.connect(deployer).proposeEvaluationFee(ONE_USDC);
+        await time.increase(GOVERNANCE_DELAY + 1);
+        await manager.connect(deployer).executeEvaluationFee(ONE_USDC);
+        return base;
+      }
+
+      it("should use fixed fee instead of proportional on complete()", async function () {
+        const { manager, usdc, provider, evaluator, deployer } = await loadFixture(fixedFeeFixture);
+
+        const providerBefore  = await usdc.balanceOf(provider.address);
+        const evaluatorBefore = await usdc.balanceOf(evaluator.address);
+        const treasuryBefore  = await usdc.balanceOf(deployer.address);
+
+        await manager.connect(evaluator).complete(1n, REASON);
+
+        // evaluationFee = 1_000_000, budget = 5_000_000
+        // evaluatorFee  = 1_000_000 * 8_000 / 10_000 = 800_000 (80%)
+        // treasuryFee   = 1_000_000 - 800_000         = 200_000 (20%)
+        // providerPay   = 5_000_000 - 1_000_000       = 4_000_000
+        const fee          = ONE_USDC; // 1_000_000
+        const evaluatorFee = fee * 8000n / 10000n; // 800_000
+        const treasuryFee  = fee - evaluatorFee;   // 200_000
+
+        expect(await usdc.balanceOf(provider.address)  - providerBefore).to.equal(FIVE_USDC - fee);
+        expect(await usdc.balanceOf(evaluator.address) - evaluatorBefore).to.equal(evaluatorFee);
+        expect(await usdc.balanceOf(deployer.address)  - treasuryBefore).to.equal(treasuryFee);
+      });
+
+      it("should emit FeeDistributed with fixed-fee amounts on complete()", async function () {
+        const { manager, usdc, evaluator, deployer } = await loadFixture(fixedFeeFixture);
+
+        const fee          = ONE_USDC;
+        const evaluatorFee = fee * 8000n / 10000n;
+        const treasuryFee  = fee - evaluatorFee;
+
+        await expect(manager.connect(evaluator).complete(1n, REASON))
+          .to.emit(manager, "FeeDistributed")
+          .withArgs(1n, evaluator.address, evaluatorFee, treasuryFee);
+      });
+
+    });
+
+    // ── fixed-fee mode: reject() ──────────────────────────────────────────────
+
+    describe("fixed-fee mode in reject()", function () {
+
+      async function fixedFeeSubmittedFixture() {
+        // Set evaluationFee BEFORE creating the job — governance delay (2 days) would
+        // push the clock past the 1-hour deadline in submittedJobFixture.
+        const base = await deployFixture();
+        const { manager, usdc, client, provider, evaluator, deployer } = base;
+
+        await manager.connect(deployer).proposeEvaluationFee(ONE_USDC);
+        await time.increase(GOVERNANCE_DELAY + 1);
+        await manager.connect(deployer).executeEvaluationFee(ONE_USDC);
+
+        // Create and fund the job after the governance delay so the deadline is fresh.
+        await createExplicitJob(manager, client, provider.address, evaluator.address, await usdc.getAddress());
+        await manager.connect(client).setBudget(1n, FIVE_USDC);
+        await usdc.mint(client.address, FIVE_USDC);
+        await usdc.connect(client).approve(await manager.getAddress(), FIVE_USDC);
+        await manager.connect(client).fund(1n, FIVE_USDC);
+        await manager.connect(provider).submit(1n, DELIVERABLE);
+
+        return base;
+      }
+
+      it("should use fixed fee on reject() and refund client net of fee", async function () {
+        const { manager, usdc, client, evaluator, deployer } = await loadFixture(fixedFeeSubmittedFixture);
+
+        const clientBefore    = await usdc.balanceOf(client.address);
+        const evaluatorBefore = await usdc.balanceOf(evaluator.address);
+        const treasuryBefore  = await usdc.balanceOf(deployer.address);
+
+        await manager.connect(evaluator).reject(1n, REASON);
+        await manager.connect(client).claimRefund(await usdc.getAddress());
+
+        // evaluationFee = 1_000_000, budget = 5_000_000
+        // evaluatorFee = 800_000, treasuryFee = 200_000
+        // client refund = 5_000_000 - 1_000_000 = 4_000_000
+        const fee          = ONE_USDC;
+        const evaluatorFee = fee * 8000n / 10000n;
+        const treasuryFee  = fee - evaluatorFee;
+
+        expect(await usdc.balanceOf(client.address)    - clientBefore).to.equal(FIVE_USDC - fee);
+        expect(await usdc.balanceOf(evaluator.address) - evaluatorBefore).to.equal(evaluatorFee);
+        expect(await usdc.balanceOf(deployer.address)  - treasuryBefore).to.equal(treasuryFee);
+      });
+
+      it("should emit FeeDistributed with fixed-fee amounts on reject()", async function () {
+        const { manager, evaluator } = await loadFixture(fixedFeeSubmittedFixture);
+
+        const fee          = ONE_USDC;
+        const evaluatorFee = fee * 8000n / 10000n;
+        const treasuryFee  = fee - evaluatorFee;
+
+        await expect(manager.connect(evaluator).reject(1n, REASON))
+          .to.emit(manager, "FeeDistributed")
+          .withArgs(1n, evaluator.address, evaluatorFee, treasuryFee);
+      });
+
+    });
+
+    // ── fixed fee cap: evaluationFee > budget ─────────────────────────────────
+
+    describe("evaluationFee capped at budget", function () {
+
+      it("should cap fee at budget when evaluationFee > budget on complete()", async function () {
+        const { manager, usdc, client, provider, evaluator, deployer } = await loadFixture(deployFixture);
+
+        // Set evaluationFee = 10 USDC > job budget (1 USDC)
+        const hugeFee = ethers.parseUnits("10", 6);
+        await manager.connect(deployer).proposeEvaluationFee(hugeFee);
+        await time.increase(GOVERNANCE_DELAY + 1);
+        await manager.connect(deployer).executeEvaluationFee(hugeFee);
+
+        const budget = ONE_USDC; // 1 USDC
+        await createExplicitJob(manager, client, provider.address, evaluator.address, await usdc.getAddress());
+        await manager.connect(client).setBudget(1n, budget);
+        await usdc.mint(client.address, budget);
+        await usdc.connect(client).approve(await manager.getAddress(), budget);
+        await manager.connect(client).fund(1n, budget);
+        await manager.connect(provider).submit(1n, DELIVERABLE);
+
+        const providerBefore  = await usdc.balanceOf(provider.address);
+        const evaluatorBefore = await usdc.balanceOf(evaluator.address);
+        const treasuryBefore  = await usdc.balanceOf(deployer.address);
+
+        await manager.connect(evaluator).complete(1n, REASON);
+
+        // fee capped to budget = 1_000_000
+        // evaluatorFee = 1_000_000 * 8_000 / 10_000 = 800_000
+        // treasuryFee  = 200_000
+        // providerPay  = 1_000_000 - 1_000_000 = 0
+        const cappedFee    = budget;
+        const evaluatorFee = cappedFee * 8000n / 10000n;
+        const treasuryFee  = cappedFee - evaluatorFee;
+
+        expect(await usdc.balanceOf(provider.address)  - providerBefore).to.equal(0n);
+        expect(await usdc.balanceOf(evaluator.address) - evaluatorBefore).to.equal(evaluatorFee);
+        expect(await usdc.balanceOf(deployer.address)  - treasuryBefore).to.equal(treasuryFee);
+      });
+
+    });
+
+  });
 
   describe("Invariants", function () {
 
