@@ -62,6 +62,8 @@ export type { Nonces } from "./@openzeppelin/contracts/utils/Nonces";
 export { Nonces__factory } from "./factories/@openzeppelin/contracts/utils/Nonces__factory";
 export type { ReentrancyGuard } from "./@openzeppelin/contracts/utils/ReentrancyGuard";
 export { ReentrancyGuard__factory } from "./factories/@openzeppelin/contracts/utils/ReentrancyGuard__factory";
+export type { ReentrancyGuardTransient } from "./@openzeppelin/contracts/utils/ReentrancyGuardTransient";
+export { ReentrancyGuardTransient__factory } from "./factories/@openzeppelin/contracts/utils/ReentrancyGuardTransient__factory";
 export type { ShortStrings } from "./@openzeppelin/contracts/utils/ShortStrings";
 export { ShortStrings__factory } from "./factories/@openzeppelin/contracts/utils/ShortStrings__factory";
 export type { Strings } from "./@openzeppelin/contracts/utils/Strings";
