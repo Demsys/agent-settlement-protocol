@@ -72,10 +72,10 @@ Because `evaluator` is the second indexed topic, you can filter `eth_getLogs` di
 
 ### getLogs pagination
 
-Base Sepolia enforces a maximum of **9000 blocks per `eth_getLogs` request**. Requests spanning more blocks are rejected with an RPC error. Paginate in chunks:
+The public Base Sepolia RPC (`sepolia.base.org`) enforces a maximum of **2000 blocks per `eth_getLogs` request**. Requests spanning more blocks are rejected with an RPC error. Paginate in chunks:
 
 ```typescript
-const CHUNK_SIZE = 9_000n
+const CHUNK_SIZE = 2_000n
 
 for (let start = fromBlock; start <= toBlock; start += CHUNK_SIZE) {
   const end = start + CHUNK_SIZE - 1n < toBlock ? start + CHUNK_SIZE - 1n : toBlock
@@ -160,6 +160,24 @@ await tx.wait(1)
 ```
 
 Only the assigned evaluator for a job can call `complete()` or `reject()` on that job. Any other address will revert.
+
+### Fee received by the evaluator
+
+On every `complete()` or `reject()` call, the evaluator receives 80% of the gross protocol fee. The fee is computed as follows:
+
+- **Fixed-fee mode** (`evaluationFee > 0`): fee = `min(evaluationFee, budget)`. The fixed fee is set by governance and is independent of job size — it guarantees the evaluator covers gas costs even on small-budget jobs.
+- **Proportional mode** (`evaluationFee == 0`): fee = `budget × feeRate / 10_000`.
+
+The evaluator's share is always `fee × 8000 / 10_000` (80%). The remaining 20% goes to the Treasury.
+
+Check the current mode on-chain:
+
+```typescript
+const evaluationFee = await jobManager.evaluationFee()   // 0 = proportional mode
+const feeRate       = await jobManager.feeRate()          // basis points, e.g. 50 = 0.5%
+```
+
+The fee is paid in the job's payment token (e.g. MockUSDC on testnet, USDC on mainnet) directly to the evaluator's wallet on settlement — no claim step required.
 
 ---
 

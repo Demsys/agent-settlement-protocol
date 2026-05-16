@@ -28,6 +28,20 @@ async function main() {
     console.log(`  ETH: ${parseFloat(ethers.formatEther(eth)).toFixed(4)} | VRT wallet: ${ethers.formatEther(vrt)} | Staked: ${ethers.formatEther(stake)} | Eligible: ${eligible}`)
   }
 
+  console.log('\n=== PROTOCOL CONFIG ===')
+  try {
+    const feeRate       = await jobManager.feeRate()
+    const evaluationFee = await jobManager.evaluationFee()
+    console.log(`feeRate       : ${feeRate} bps (${Number(feeRate) / 100}%)`)
+    if (evaluationFee > 0n) {
+      console.log(`evaluationFee : ${ethers.formatUnits(evaluationFee, 6)} USDC (fixed mode)`)
+    } else {
+      console.log(`evaluationFee : 0 — proportional mode active`)
+    }
+  } catch {
+    console.log('(pre-Phase2 contract — evaluationFee not available)')
+  }
+
   console.log('\n=== JOBS ===')
   const statusLabel = ['Open','Funded','Submitted','Completed','Rejected','Expired']
   let totalJobs = 0
