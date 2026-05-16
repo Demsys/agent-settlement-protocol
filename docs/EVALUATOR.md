@@ -18,16 +18,16 @@ This guide covers everything needed to run an evaluator daemon against the Base 
 
 ## Contract Addresses (Base Sepolia)
 
-Deployed 2026-05-04.
+Deployed 2026-05-15 (Phase 2 — ReentrancyGuardTransient + evaluationFee).
 
 | Contract | Address |
 |---|---|
-| AgentJobManager | `0xC07CE789206CBEEC3A41D5CedBdA93B1024aaDdd` |
-| EvaluatorRegistry | `0x4F4aa58A715B6a5357da0EA067C405803f489BD1` |
-| Treasury | `0x3CB5FB6C2b986e9Aa545da958E77b847C6FF677D` |
-| ProtocolToken (VRT) | `0x4c4468567eE753d1b27Cf02b5896b4af71c40719` |
-| MockUSDC | `0xC87bde7b470e23Db5558fb4eE4073908dA21Bb0B` |
-| ReputationBridge | `0x8CEbEF8f552bC8fDB48FBB8ad9B21CE1e3E03bfd` |
+| AgentJobManager | `0x27E64c0180b1c9D860561C423479492f25ff7bE3` |
+| EvaluatorRegistry | `0xE9DDe24E5Fa3182Ab231099493D7179A0A232e6d` |
+| Treasury | `0x6F56631C0071852FA3E1004e9d1CC5E555Fd2850` |
+| ProtocolToken (VRT) | `0x7CfC2F33ba75e485d27D38d38b5AcA4B5e286138` |
+| MockUSDC | `0x7DC5C4048feECaDDC33A3cF11E2eFA0842a2D16D` |
+| ReputationBridge | `0x8ce1F1a3DD4cd31bb17b20886f302940aF9Dd556` |
 
 ---
 
