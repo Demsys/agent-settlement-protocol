@@ -110,17 +110,20 @@ The evaluator is selected automatically from `EvaluatorRegistry` at job creation
 
 ## Deployed Contracts (Base Sepolia)
 
-Deployed on 2026-04-10, governance pending 2026-04-12. Chain ID: 84532.
+Phase 2 — deployed 2026-05-15. Chain ID: 84532.
+
+Includes `ReentrancyGuardTransient` (EIP-1153) and `evaluationFee` governance.
 
 | Contract | Address | Explorer |
 |---|---|---|
-| AgentJobManager | `0xB8C41C289AA2D55b7A8ae53003F212AcABEcc597` | [basescan](https://sepolia.basescan.org/address/0xB8C41C289AA2D55b7A8ae53003F212AcABEcc597#readContract) |
-| EvaluatorRegistry | `0x454911f476493dcB34273C9c22Ded2CeCec0Dd2c` | [basescan](https://sepolia.basescan.org/address/0x454911f476493dcB34273C9c22Ded2CeCec0Dd2c#readContract) |
-| ReputationBridge | `0x2Fa2eB888e217e095638fa3763322DAcaAac904a` | [basescan](https://sepolia.basescan.org/address/0x2Fa2eB888e217e095638fa3763322DAcaAac904a#readContract) |
-| ProtocolToken | `0x9FC09D3b2ACc67c7F1a2e961e3c5fA32Cc94514A` | [basescan](https://sepolia.basescan.org/address/0x9FC09D3b2ACc67c7F1a2e961e3c5fA32Cc94514A#readContract) |
-| MockUSDC | `0x2334bcfd88644d77531C47adCB07872fbcE40afC` | [basescan](https://sepolia.basescan.org/address/0x2334bcfd88644d77531C47adCB07872fbcE40afC#readContract) |
+| AgentJobManager | `0x27E64c0180b1c9D860561C423479492f25ff7bE3` | [basescan](https://sepolia.basescan.org/address/0x27E64c0180b1c9D860561C423479492f25ff7bE3#readContract) |
+| EvaluatorRegistry | `0xE9DDe24E5Fa3182Ab231099493D7179A0A232e6d` | [basescan](https://sepolia.basescan.org/address/0xE9DDe24E5Fa3182Ab231099493D7179A0A232e6d#readContract) |
+| ReputationBridge | `0x8ce1F1a3DD4cd31bb17b20886f302940aF9Dd556` | [basescan](https://sepolia.basescan.org/address/0x8ce1F1a3DD4cd31bb17b20886f302940aF9Dd556#readContract) |
+| ProtocolToken (VRT) | `0x7CfC2F33ba75e485d27D38d38b5AcA4B5e286138` | [basescan](https://sepolia.basescan.org/address/0x7CfC2F33ba75e485d27D38d38b5AcA4B5e286138#readContract) |
+| Treasury | `0x6F56631C0071852FA3E1004e9d1CC5E555Fd2850` | [basescan](https://sepolia.basescan.org/address/0x6F56631C0071852FA3E1004e9d1CC5E555Fd2850#readContract) |
+| MockUSDC | `0x7DC5C4048feECaDDC33A3cF11E2eFA0842a2D16D` | [basescan](https://sepolia.basescan.org/address/0x7DC5C4048feECaDDC33A3cF11E2eFA0842a2D16D#readContract) |
 
-Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 1 VRT token.
+Protocol configuration: fee rate 0.5% (50 bps), minimum evaluator stake 100 VRT.
 
 The live API is available at `https://agent-settlement-protocol-production.up.railway.app`.
 
