@@ -7,7 +7,11 @@
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network base-sepolia",
-    "demo": "hardhat run scripts/demo.ts --network base-sepolia"
+    "demo": "hardhat run scripts/demo.ts --network base-sepolia",
+    "agent:forum": "ts-node agents/forum-watcher.ts",
+    "agent:forum:reset": "node -e \"require('fs').writeFileSync('agents/state/forum-state.json', JSON.stringify({lastSeenPostNumber:0,lastChecked:new Date().toISOString()},null,2))\"",
+    "agent:evaluator": "ts-node agents/evaluator-daemon.ts",
+    "agent:evaluator:reset": "node -e \"require('fs').writeFileSync('agents/state/evaluator-state.json', JSON.stringify({lastScannedBlock:40000000,lastChecked:new Date().toISOString()},null,2))\""
   },
   "keywords": [
     "erc-8183",
@@ -26,6 +30,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@openzeppelin/contracts": "^5.6.1"
   }
 }

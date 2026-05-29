@@ -86,6 +86,8 @@ export type { IAgentJobManager } from "./contracts/interfaces/IAgentJobManager";
 export { IAgentJobManager__factory } from "./factories/contracts/interfaces/IAgentJobManager__factory";
 export type { IAttestationVerifier } from "./contracts/interfaces/IAttestationVerifier";
 export { IAttestationVerifier__factory } from "./factories/contracts/interfaces/IAttestationVerifier__factory";
+export type { MockAttestationVerifier } from "./contracts/test/MockAttestationVerifier";
+export { MockAttestationVerifier__factory } from "./factories/contracts/test/MockAttestationVerifier__factory";
 export type { MockERC8004Registry } from "./contracts/test/MockERC8004Registry";
 export { MockERC8004Registry__factory } from "./factories/contracts/test/MockERC8004Registry__factory";
 export type { MockUSDC } from "./contracts/test/MockUSDC";
