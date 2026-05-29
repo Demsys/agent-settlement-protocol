@@ -790,8 +790,8 @@ app.post('/v1/jobs/:id/complete', requireApiKey, async (req: Request<{ id: strin
       const onChainJobId = BigInt(id)
       const nonce = await primaryProvider.getTransactionCount(evaluatorAddress, 'pending')
       console.log(`[complete] Nonce: ${nonce}`)
-      const gasEstimate = await jobManager.complete.estimateGas(onChainJobId, reasonBytes)
-      const completeTx = await jobManager.complete(onChainJobId, reasonBytes, {
+      const gasEstimate = await jobManager["complete(uint256,bytes32)"].estimateGas(onChainJobId, reasonBytes)
+      const completeTx = await jobManager["complete(uint256,bytes32)"](onChainJobId, reasonBytes, {
         gasLimit: (gasEstimate * 120n) / 100n, nonce,
       })
       console.log(`[complete] tx sent: ${completeTx.hash}`)
