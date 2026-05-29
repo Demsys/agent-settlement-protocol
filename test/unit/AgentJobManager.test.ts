@@ -1519,4 +1519,143 @@ describe("AgentJobManager", function () {
       expect(contractBalance).to.equal(budget1 + budget2);
     });
   });
+
+  // ── attested complete() ────────────────────────────────────────────────────
+
+  describe("attested complete()", function () {
+
+    const ATTESTATION_HASH = ethers.keccak256(ethers.toUtf8Bytes("manifest_hash_v1"));
+    const PROOF            = ethers.toUtf8Bytes("dummy-proof-payload");
+
+    /**
+     * Fixture: deploys everything, then creates, funds, and submits a job.
+     * Returns a MockAttestationVerifier (initially configured to pass) and
+     * the jobId so individual tests can call the attested complete() directly.
+     */
+    async function attestedCompleteFixture() {
+      const base = await loadFixture(deployFixture);
+      const { manager, usdc, client, provider, evaluator } = base;
+
+      // Deploy mock verifier configured to pass
+      const MockVerifierFactory = await ethers.getContractFactory("MockAttestationVerifier");
+      const verifier = await MockVerifierFactory.deploy(true);
+      await verifier.waitForDeployment();
+
+      // Create, fund, and submit the job
+      const jobId = await createExplicitJob(
+        manager, client, provider.address, evaluator.address, await usdc.getAddress()
+      );
+      await manager.connect(client).setBudget(jobId, FIVE_USDC);
+      await usdc.mint(client.address, FIVE_USDC);
+      await usdc.connect(client).approve(await manager.getAddress(), FIVE_USDC);
+      await manager.connect(client).fund(jobId, FIVE_USDC);
+      await manager.connect(provider).submit(jobId, DELIVERABLE);
+
+      return { ...base, verifier, jobId };
+    }
+
+    it("completes the job and stores attestationHash as job.reason", async function () {
+      const { manager, evaluator, verifier, jobId } = await loadFixture(attestedCompleteFixture);
+
+      await manager.connect(evaluator)["complete(uint256,bytes32,address,bytes)"](
+        jobId, ATTESTATION_HASH, await verifier.getAddress(), PROOF
+      );
+
+      const job = await manager.getJob(jobId);
+      expect(job.status).to.equal(JobStatus.Completed);
+      expect(job.reason).to.equal(ATTESTATION_HASH);
+      expect(job.budget).to.equal(0n);
+    });
+
+    it("emits JobCompleted and FeeDistributed events", async function () {
+      const { manager, evaluator, verifier, jobId } = await loadFixture(attestedCompleteFixture);
+
+      const expectedFee        = FIVE_USDC * BigInt(FEE_RATE) / 10_000n;
+      const expectedPayment    = FIVE_USDC - expectedFee;
+      const expectedEvalFee    = expectedFee * 8_000n / 10_000n;
+      const expectedTreasuryFee = expectedFee - expectedEvalFee;
+
+      await expect(
+        manager.connect(evaluator)["complete(uint256,bytes32,address,bytes)"](
+          jobId, ATTESTATION_HASH, await verifier.getAddress(), PROOF
+        )
+      )
+        .to.emit(manager, "JobCompleted")
+        .withArgs(jobId, anyValue, expectedPayment, expectedFee)
+        .and.to.emit(manager, "FeeDistributed")
+        .withArgs(jobId, evaluator.address, expectedEvalFee, expectedTreasuryFee);
+    });
+
+    it("reverts with AttestationFailed when verifier returns false", async function () {
+      const { manager, evaluator, verifier, jobId } = await loadFixture(attestedCompleteFixture);
+
+      await verifier.setResult(false);
+
+      await expect(
+        manager.connect(evaluator)["complete(uint256,bytes32,address,bytes)"](
+          jobId, ATTESTATION_HASH, await verifier.getAddress(), PROOF
+        )
+      ).to.be.revertedWithCustomError(manager, "AttestationFailed")
+        .withArgs(jobId, await verifier.getAddress());
+    });
+
+    it("reverts with ZeroAddress when verifier is address(0)", async function () {
+      const { manager, evaluator, jobId } = await loadFixture(attestedCompleteFixture);
+
+      await expect(
+        manager.connect(evaluator)["complete(uint256,bytes32,address,bytes)"](
+          jobId, ATTESTATION_HASH, ethers.ZeroAddress, PROOF
+        )
+      ).to.be.revertedWithCustomError(manager, "ZeroAddress")
+        .withArgs("verifier");
+    });
+
+    it("reverts with NotAuthorized when called by non-evaluator", async function () {
+      const { manager, stranger, verifier, jobId } = await loadFixture(attestedCompleteFixture);
+
+      await expect(
+        manager.connect(stranger)["complete(uint256,bytes32,address,bytes)"](
+          jobId, ATTESTATION_HASH, await verifier.getAddress(), PROOF
+        )
+      ).to.be.revertedWithCustomError(manager, "NotAuthorized")
+        .withArgs(stranger.address, jobId, "evaluator");
+    });
+
+    it("reverts with InvalidJobStatus when job is not Submitted", async function () {
+      const { manager, client, provider, evaluator, usdc, verifier } =
+        await loadFixture(attestedCompleteFixture);
+
+      // Create a job and stop at Funded state (do not submit)
+      const jobId2 = await createExplicitJob(
+        manager, client, provider.address, evaluator.address, await usdc.getAddress()
+      );
+      await manager.connect(client).setBudget(jobId2, FIVE_USDC);
+      await usdc.mint(client.address, FIVE_USDC);
+      await usdc.connect(client).approve(await manager.getAddress(), FIVE_USDC);
+      await manager.connect(client).fund(jobId2, FIVE_USDC);
+      // Still Funded — not yet Submitted
+
+      await expect(
+        manager.connect(evaluator)["complete(uint256,bytes32,address,bytes)"](
+          jobId2, ATTESTATION_HASH, await verifier.getAddress(), PROOF
+        )
+      ).to.be.revertedWithCustomError(manager, "InvalidJobStatus")
+        .withArgs(jobId2, JobStatus.Funded);
+    });
+
+    it("transfers the correct payment to the provider after fee deduction", async function () {
+      const { manager, evaluator, provider, usdc, verifier, jobId } =
+        await loadFixture(attestedCompleteFixture);
+
+      const expectedFee     = FIVE_USDC * BigInt(FEE_RATE) / 10_000n;
+      const expectedPayment = FIVE_USDC - expectedFee;
+      const balanceBefore   = await usdc.balanceOf(provider.address);
+
+      await manager.connect(evaluator)["complete(uint256,bytes32,address,bytes)"](
+        jobId, ATTESTATION_HASH, await verifier.getAddress(), PROOF
+      );
+
+      expect(await usdc.balanceOf(provider.address)).to.equal(balanceBefore + expectedPayment);
+    });
+  });
 });

@@ -39,3 +39,6 @@ sdk/python/dist/
 sdk/python/asp_sdk.egg-info/
 sdk/python/build/
 api/dist/
+
+# Agent state (persisted locally, not committed)
+agents/state/
