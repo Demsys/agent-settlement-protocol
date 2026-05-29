@@ -70,7 +70,8 @@ export interface IAgentJobManagerInterface extends Interface {
     nameOrSignature:
       | "claimExpired"
       | "claimRefund"
-      | "complete"
+      | "complete(uint256,bytes32,address,bytes)"
+      | "complete(uint256,bytes32)"
       | "createJob"
       | "evaluationFee"
       | "fund"
@@ -108,7 +109,11 @@ export interface IAgentJobManagerInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(
-    functionFragment: "complete",
+    functionFragment: "complete(uint256,bytes32,address,bytes)",
+    values: [BigNumberish, BytesLike, AddressLike, BytesLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "complete(uint256,bytes32)",
     values: [BigNumberish, BytesLike]
   ): string;
   encodeFunctionData(
@@ -156,7 +161,14 @@ export interface IAgentJobManagerInterface extends Interface {
     functionFragment: "claimRefund",
     data: BytesLike
   ): Result;
-  decodeFunctionResult(functionFragment: "complete", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "complete(uint256,bytes32,address,bytes)",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "complete(uint256,bytes32)",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "createJob", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "evaluationFee",
@@ -469,7 +481,18 @@ export interface IAgentJobManager extends BaseContract {
 
   claimRefund: TypedContractMethod<[token: AddressLike], [void], "nonpayable">;
 
-  complete: TypedContractMethod<
+  "complete(uint256,bytes32,address,bytes)": TypedContractMethod<
+    [
+      jobId: BigNumberish,
+      attestationHash: BytesLike,
+      verifier: AddressLike,
+      proof: BytesLike
+    ],
+    [void],
+    "nonpayable"
+  >;
+
+  "complete(uint256,bytes32)": TypedContractMethod<
     [jobId: BigNumberish, reason: BytesLike],
     [void],
     "nonpayable"
@@ -537,7 +560,19 @@ export interface IAgentJobManager extends BaseContract {
     nameOrSignature: "claimRefund"
   ): TypedContractMethod<[token: AddressLike], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "complete"
+    nameOrSignature: "complete(uint256,bytes32,address,bytes)"
+  ): TypedContractMethod<
+    [
+      jobId: BigNumberish,
+      attestationHash: BytesLike,
+      verifier: AddressLike,
+      proof: BytesLike
+    ],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
+    nameOrSignature: "complete(uint256,bytes32)"
   ): TypedContractMethod<
     [jobId: BigNumberish, reason: BytesLike],
     [void],

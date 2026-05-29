@@ -241,6 +241,12 @@ interface IAgentJobManager {
     ///      protocol unable to collect its fee at any feeRate.
     error BudgetBelowMinimum(uint128 amount, uint128 minimum);
 
+    /// @notice Thrown when the attested complete() overload is called and the verifier
+    ///         returns false — the proof does not match the attestation hash.
+    /// @param jobId    The job on which the failed attestation was attempted.
+    /// @param verifier The IAttestationVerifier contract that returned false.
+    error AttestationFailed(uint256 jobId, address verifier);
+
     // ─── Core ERC-8183 Functions ──────────────────────────────────────────────
 
     /**
@@ -320,6 +326,38 @@ interface IAgentJobManager {
      * @param reason Keccak256 hash of the evaluation report. Pass bytes32(0) if none.
      */
     function complete(uint256 jobId, bytes32 reason) external;
+
+    /**
+     * @notice Attested variant of complete() — verifies a structured proof on-chain
+     *         before settling the job. No trusted oracle required.
+     * @dev Same CEI pattern as complete(jobId, bytes32), with an additional verification
+     *      step in CHECKS:
+     *      (0) Verify: IAttestationVerifier(verifier).verify(attestationHash, proof) == true
+     *      (1) Checks: status == Submitted, msg.sender == evaluator
+     *      (2) Effects: status = Completed, reason = attestationHash, budget = 0
+     *      (3) Interactions: same transfers as complete()
+     *
+     *      The evaluator fetches the attestation from the provider's gateway
+     *      (e.g. GET /agent/verify/:inputHash for ERC-8263), then calls this overload
+     *      with the full struct + signature as `proof`. The verifier contract does the
+     *      EIP-712 ecrecover — no off-chain trust assumption.
+     *
+     *      `attestationHash` is stored as `job.reason` on-chain, serving as the
+     *      `commitmentRef` in the ERC-8265 Appendix B outcome envelope mapping.
+     *
+     *      Reverts with AttestationFailed if verify() returns false.
+     *      Reverts with ZeroAddress("verifier") if verifier is address(0).
+     * @param jobId           The job to mark as completed.
+     * @param attestationHash keccak256 commitment over the attestation (e.g. manifest_hash).
+     * @param verifier        Address of an IAttestationVerifier implementation.
+     * @param proof           ABI-encoded proof payload passed verbatim to verifier.verify().
+     */
+    function complete(
+        uint256 jobId,
+        bytes32 attestationHash,
+        address verifier,
+        bytes calldata proof
+    ) external;
 
     /**
      * @notice Rejects a job and registers a refund for the Client (Pull pattern).

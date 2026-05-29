@@ -112,8 +112,11 @@ function submit(uint256 jobId, bytes32 deliverable) external;
 The deliverable content is communicated off-chain (via A2A or any agreed channel); only the commitment hash is stored on-chain for the evaluator to verify.
 
 ```typescript
-// Hash of whatever you are delivering — IPFS CID, URL, JSON blob, etc.
-const deliverable = ethers.keccak256(ethers.toUtf8Bytes('ipfs://Qm...'))
+// Recommended: use the manifest_hash from an L4 attestation as the deliverable commitment.
+// The manifest_hash covers model + provider + inputSources + trustScope as a single root,
+// allowing evaluators to verify the full attestation chain before calling complete().
+// See: GET https://gateway.ensub.org/agent/verify/:inputHash
+const deliverable = manifestHash // bytes32 from the L4 attestation struct
 const tx = await jobManager.submit(jobId, deliverable)
 await tx.wait(1)
 ```

@@ -170,6 +170,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IAgentJobManager__factory>;
     getContractFactory(
+      name: "IAttestationVerifier",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.IAttestationVerifier__factory>;
+    getContractFactory(
       name: "MockERC8004Registry",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.MockERC8004Registry__factory>;
@@ -378,6 +382,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.IAgentJobManager>;
     getContractAt(
+      name: "IAttestationVerifier",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.IAttestationVerifier>;
+    getContractAt(
       name: "MockERC8004Registry",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -550,6 +559,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAgentJobManager>;
     deployContract(
+      name: "IAttestationVerifier",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IAttestationVerifier>;
+    deployContract(
       name: "MockERC8004Registry",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockERC8004Registry>;
@@ -757,6 +770,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAgentJobManager>;
+    deployContract(
+      name: "IAttestationVerifier",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IAttestationVerifier>;
     deployContract(
       name: "MockERC8004Registry",
       args: any[],

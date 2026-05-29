@@ -12,6 +12,22 @@ const _abi = [
   {
     inputs: [
       {
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        internalType: "address",
+        name: "verifier",
+        type: "address",
+      },
+    ],
+    name: "AttestationFailed",
+    type: "error",
+  },
+  {
+    inputs: [
+      {
         internalType: "uint128",
         name: "amount",
         type: "uint128",
@@ -506,6 +522,34 @@ const _abi = [
       },
     ],
     name: "claimRefund",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        internalType: "bytes32",
+        name: "attestationHash",
+        type: "bytes32",
+      },
+      {
+        internalType: "address",
+        name: "verifier",
+        type: "address",
+      },
+      {
+        internalType: "bytes",
+        name: "proof",
+        type: "bytes",
+      },
+    ],
+    name: "complete",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",

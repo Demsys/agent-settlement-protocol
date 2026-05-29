@@ -38,6 +38,8 @@ All four addresses must be distinct. Use hardware wallets (Ledger/Trezor) for Re
 
 Each EOA needs ≥ 0.01 ETH on Base mainnet to cover deployment gas. Base L2 gas costs are minimal (~$0.01/tx) but the ceremony involves ~15 transactions total.
 
+Fund each role EOA from the Deployer in **three separate transactions** (one per recipient). The Deployer is the visible funding source for all three — this is a ceremony artifact, not a role-authority correlation. The role assignments (Step 4) are the authoritative trust boundary; funding-source linkage carries no protocol authority.
+
 ### 4. Salt chosen and published
 
 Choose an `AGENT_SALT` string (e.g. `"asp-v1"`). The final CREATE2 salt is derived as:

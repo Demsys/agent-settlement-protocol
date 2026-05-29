@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 // ─── Internal imports ────────────────────────────────────────────────────────
 import "../interfaces/IAgentJobManager.sol";
+import "../interfaces/IAttestationVerifier.sol";
 import "./EvaluatorRegistry.sol";
 
 // ─── Local interface for ReputationBridge ────────────────────────────────────
@@ -667,30 +668,63 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
     /**
      * @notice Evaluator approves the deliverable — transitions job to Completed
      *         and releases payment to the Provider minus the protocol fee.
-     * @dev CEI pattern strictly enforced:
-     *      (1) Checks: status == Submitted, msg.sender == evaluator
-     *      (2) Effects: status = Completed, budget = 0, compute fee split
-     *      (3) Interactions: safeTransfer to provider, safeTransfer to treasury (20% of fee),
-     *          safeTransfer to evaluator (80% of fee), then optional call to ReputationBridge
-     *          (treasury is transferred first — it is a trusted contract; evaluator is external)
-     *      Fee calculation: see _computeFee() — either fixed (evaluationFee) or proportional (feeRate)
-     *      Fee split: evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000 (80%)
-     *                 treasuryFee  = fee - evaluatorFee (20%, gets rounding remainder)
-     *      Rounding: fee and evaluatorFee both truncate toward zero. treasuryFee = fee - evaluatorFee
-     *      never underflows. The Provider always receives at least (budget - theoreticalFee),
-     *      favoring the Provider over the protocol on rounding edge cases.
-     *      If feeRate == 0 or fee rounds to 0, no fee transfers occur and FeeDistributed is
-     *      not emitted (both evaluatorFee and treasuryFee are 0).
-     *      ReputationBridge call (FINDING-002 fix): if reputationBridge != address(0),
-     *      calls IReputationBridge.recordJobOutcome() with completed=true AFTER all
-     *      token transfers. The call is conditional — a zero bridge address is silently
-     *      skipped. The call is NOT wrapped in try/catch here because ReputationBridge
-     *      itself catches failures internally; if the bridge reverts unexpectedly the
-     *      settlement should surface that error rather than hide it silently.
+     * @dev Thin wrapper around _settleComplete(). See _settleComplete() for full
+     *      CEI documentation. The `reason` parameter is stored as-is as job.reason.
      * @param jobId  The job to mark as completed.
      * @param reason Keccak256 hash of the evaluation report (bytes32(0) if none).
      */
     function complete(uint256 jobId, bytes32 reason) external nonReentrant jobMustExist(jobId) {
+        _settleComplete(jobId, reason);
+    }
+
+    /**
+     * @notice Attested variant of complete() — verifies a structured proof on-chain
+     *         before settling. No trusted oracle required.
+     * @dev Calls IAttestationVerifier(verifier).verify(attestationHash, proof) in the
+     *      CHECKS phase, then delegates to _settleComplete(jobId, attestationHash).
+     *      The verifier is an external contract implementing IAttestationVerifier;
+     *      it manages its own trusted signer set (e.g. an ERC-8263 gateway attestor).
+     *      `attestationHash` is stored as job.reason and serves as the `commitmentRef`
+     *      in the ERC-8265 Appendix B outcome envelope mapping.
+     *      Reverts with AttestationFailed if verify() returns false.
+     *      Reverts with ZeroAddress("verifier") if verifier is address(0).
+     * @param jobId           The job to mark as completed.
+     * @param attestationHash keccak256 commitment over the attestation (e.g. manifest_hash).
+     * @param verifier        Address of an IAttestationVerifier implementation.
+     * @param proof           ABI-encoded proof payload passed verbatim to verifier.verify().
+     */
+    function complete(
+        uint256 jobId,
+        bytes32 attestationHash,
+        address verifier,
+        bytes calldata proof
+    ) external nonReentrant jobMustExist(jobId) {
+        if (verifier == address(0)) revert ZeroAddress("verifier");
+        // verify() is declared `view` so it cannot modify state; nonReentrant on this
+        // function blocks any reentrant call into AgentJobManager from within the verifier.
+        if (!IAttestationVerifier(verifier).verify(attestationHash, proof))
+            revert AttestationFailed(jobId, verifier);
+        _settleComplete(jobId, attestationHash);
+    }
+
+    /**
+     * @dev Core settlement logic shared by both complete() overloads.
+     *      Assumes all pre-settlement checks (attestation verification if required)
+     *      have already passed in the calling function.
+     *
+     *      CEI pattern strictly enforced:
+     *      (1) Checks: status == Submitted, msg.sender == evaluator
+     *      (2) Effects: status = Completed, budget = 0, compute fee split
+     *      (3) Interactions: safeTransfer to provider, treasury (20%), evaluator (80%),
+     *          then optional ReputationBridge call (try/catch, gas-capped at 350k)
+     *
+     *      Fee calculation: _computeFee() — fixed (evaluationFee) or proportional (feeRate).
+     *      Fee split: evaluatorFee = fee * EVALUATOR_SHARE_BPS / 10_000 (80%).
+     *                 treasuryFee  = fee - evaluatorFee (20%, absorbs rounding remainder).
+     *      Treasury transferred before evaluator — treasury is a trusted contract;
+     *      evaluator is external and could be malicious (FINDING-001).
+     */
+    function _settleComplete(uint256 jobId, bytes32 reason) internal {
         // CHECKS
         Job storage job = jobs[jobId];
         if (job.status != JobStatus.Submitted) revert InvalidJobStatus(jobId, job.status);
@@ -740,22 +774,14 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
         emit JobCompleted(jobId, provider, payment, fee);
 
         // FINDING-002 fix: forward the positive outcome to ReputationBridge if configured.
-        // This call is placed AFTER token transfers and the event (all effects done) to
-        // respect CEI. The bridge is an optional component — skip silently when not set.
         // FINDING-006 fix: wrapped in try/catch so that a buggy or malicious bridge contract
         // can never block settlement. Funds are always safe regardless of bridge state.
         address bridge = reputationBridge;
         if (bridge != address(0)) {
-            // FINDING-001 fix: cap gas forwarded to the bridge at 50 000 to prevent a
-            // malicious or misconfigured bridge from exhausting the evaluator's entire
-            // gas budget via an infinite loop. The try/catch already prevents reverts
-            // from blocking settlement; the gas cap closes the griefing vector.
-            // AUDIT-B1: the gas cap must cover the full call chain:
+            // FINDING-001/AUDIT-B1: cap covers full call chain:
             //   AgentJobManager → ReputationBridge (~100k) → ERC-8004 registry (~200k)
-            // With only 100k forwarded, ReputationBridge could not itself forward 200k to the
-            // registry (EVM EIP-150: the callee only receives what the caller has minus overhead).
-            // 350k = 200k (registry) + ~100k (bridge execution) + EIP-150 margin.
-            // AUDIT-M1: previous cap of 50 000 was too low and caused silent OOG failures.
+            // 350k = 200k (registry) + ~100k (bridge) + EIP-150 margin.
+            // AUDIT-M1: previous cap of 50 000 was too low — caused silent OOG failures.
             try IReputationBridge(bridge).recordJobOutcome{gas: 350_000}(jobId, provider, evaluator, true, reason) {}
             catch {}
         }

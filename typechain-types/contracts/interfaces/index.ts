@@ -2,3 +2,4 @@
 /* tslint:disable */
 /* eslint-disable */
 export type { IAgentJobManager } from "./IAgentJobManager";
+export type { IAttestationVerifier } from "./IAttestationVerifier";
