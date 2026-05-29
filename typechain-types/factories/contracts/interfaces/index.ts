@@ -2,3 +2,4 @@
 /* tslint:disable */
 /* eslint-disable */
 export { IAgentJobManager__factory } from "./IAgentJobManager__factory";
+export { IAttestationVerifier__factory } from "./IAttestationVerifier__factory";
