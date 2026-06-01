@@ -123,3 +123,11 @@ These specifications are referenced by Ethereum Magicians thread URLs pending ed
 - `contracts/core/AgentJobManager.sol` — attested `complete()` overload
 - `contracts/test/MockAttestationVerifier.sol` — test double
 - Deployed on Base Sepolia: `0x27E64c0180b1c9D860561C423479492f25ff7bE3`
+
+## External Implementations
+
+| Implementation | Attestation Scheme | Deployed (Sepolia) | Source |
+|---|---|---|---|
+| `WyriweAttestationVerifier` (Ensub / ccip-router) | OCP observation commitment — `keccak256(abi.encode(agentId, modelHash, inputHash, outputHash, timestamp))` | `0x9515D6e53D2D45C1CFE6181943ca11C150C2bf61` | `npm ccip-router@0.1.1` |
+
+`WyriweAttestationVerifier.verify()` recovers the signer from the EIP-712 signature over `WyriweAttestation`, recomputes `commitmentHash` from the decoded struct fields, and checks both against `attestationHash`. No external contract calls. Satisfies the §B.x invariant: `commitmentHash` includes `inputHash` as an explicit named field in the ABI encoding.
