@@ -127,7 +127,7 @@ await tx.wait(1)
 - `block.timestamp` must be ≤ `job.deadline`. If the deadline has passed, the client can call `claimExpired()` instead — `submit()` will revert.
 - `deliverable` must not be `bytes32(0)`.
 
-**Auto-extension of the deadline:** If less than `MIN_EVALUATION_WINDOW` (48 hours) remains when `submit()` is called, the contract automatically extends the deadline to `block.timestamp + MIN_EVALUATION_WINDOW`. A `DeadlineExtended` event is emitted. This protects the provider from a last-second submission being immediately expired before the evaluator can act.
+**Auto-extension of the deadline:** If less than `MIN_EVALUATION_WINDOW` (24 hours) remains when `submit()` is called, the contract automatically extends the deadline to `block.timestamp + MIN_EVALUATION_WINDOW`. A `DeadlineExtended` event is emitted. This protects the provider from a last-second submission being immediately expired before the evaluator can act.
 
 ---
 

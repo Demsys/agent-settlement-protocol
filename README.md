@@ -74,9 +74,10 @@ The evaluator is selected automatically from `EvaluatorRegistry` at job creation
 
 | Contract | Role |
 |---|---|
-| `AgentJobManager.sol` | Core ERC-8183 implementation. Manages the job lifecycle and escrow. Fires a 0.5% fee hook on `complete()`. |
+| `AgentJobManager.sol` | Core ERC-8183 implementation. Manages the job lifecycle and escrow. Collects a 0.5% fee on `complete()` and `reject()`, split 80/20 evaluator/treasury. Supports attested settlement via `IAttestationVerifier`. |
 | `EvaluatorRegistry.sol` | Staking and selection of evaluators. Registers participants who lock the protocol token as collateral. Handles slashing triggered exclusively by `AgentJobManager`. |
-| `ReputationBridge.sol` | Stateless bridge. Listens to terminal job events and writes outcomes to ERC-8004 reputation records for both provider and evaluator. |
+| `Treasury.sol` | Receives 20% of protocol fees. Stub buyback-burn mechanic (active post-mainnet via Aerodrome integration). |
+| `ReputationBridge.sol` | Stateless bridge. Forwards terminal job outcomes to ERC-8004 reputation records for provider and evaluator. |
 | `ProtocolToken.sol` | ERC-20 with `ERC20Votes` for on-chain governance and `ERC20Burnable` for the fee burn mechanic. |
 | `MockUSDC.sol` | Test-only USDC with a free `mint()` function. Used on Base Sepolia. |
 
@@ -348,7 +349,7 @@ try {
 
 Proposed 10 March 2026 by Davide Crapis (Ethereum Foundation, dAI team) and Virtuals Protocol. Defines the minimal primitive for trustless commerce between agents: a four-state job (`OPEN → FUNDED → SUBMITTED → TERMINAL`), three roles (Client, Provider, Evaluator), and an extension mechanism via Hooks.
 
-`AgentJobManager.sol` implements the full `IAgentJobManager` interface. All state transitions emit the specified events. The fee hook is implemented as an ERC-8183 Hook, not a modification of the core logic.
+`AgentJobManager.sol` implements the full `IAgentJobManager` interface. All state transitions emit the specified events. The protocol fee (0.5%) is collected in `complete()` and `reject()` and split 80/20 between the evaluator and the Treasury. An attested `complete()` overload is available for cryptographic input integrity verification via `IAttestationVerifier` (see `docs/APPENDIX_B.md`).
 
 ERC-8183 spec: [eips.ethereum.org/EIPS/eip-8183](https://eips.ethereum.org/EIPS/eip-8183)
 
@@ -372,7 +373,7 @@ The A2A protocol (Linux Foundation, June 2025) standardizes agent-to-agent task 
 
 ### Implementation posture
 
-All contracts follow Checks-Effects-Interactions without exception. Fund-transferring functions are guarded with OpenZeppelin's `ReentrancyGuard`. All token transfers use `SafeERC20`. Refunds use the pull-over-push pattern to prevent griefing. Access control on sensitive functions uses OpenZeppelin's `AccessControl` with named roles.
+All contracts follow Checks-Effects-Interactions without exception. Fund-transferring functions are guarded with OpenZeppelin's `ReentrancyGuardTransient` (EIP-1153, transient storage). All token transfers use `SafeERC20`. Refunds use the pull-over-push pattern to prevent griefing. Access control uses OpenZeppelin's `Ownable` with a governance timelock (2-day delay) on fee and treasury changes.
 
 Slashing in `EvaluatorRegistry` can only be triggered by `AgentJobManager` — never by an external caller — ensuring that stake can only be reduced as a consequence of a verified on-chain outcome.
 
