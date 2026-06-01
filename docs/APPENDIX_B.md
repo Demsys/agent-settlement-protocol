@@ -22,7 +22,7 @@ correspond to on-chain state transitions in AgentJobManager.
 | Outcome Envelope Field | ERC-8183 On-chain Field | Set at       | Description |
 |------------------------|-------------------------|--------------|-------------|
 | `status`               | `job.status`            | `complete()` / `reject()` | Terminal state: Completed, Rejected, or Expired |
-| `commitmentRef`        | `job.reason`            | `complete()` (attested path) | keccak256 of the L4 manifest struct — input anchor |
+| `commitmentRef`        | `job.reason`            | `complete()` (attested path) | Attestation commitment including `inputHash` — input anchor. Hash scheme defined by verifier. |
 | `deliverable`          | `job.deliverable`       | `submit()`   | Output hash submitted by the provider |
 | `evaluator`            | `job.evaluator`         | `fund()`     | Address of the assigned evaluator |
 
@@ -34,32 +34,24 @@ correspond to on-chain state transitions in AgentJobManager.
 
 ## Cryptographic Binding
 
-`commitmentRef` equals the `manifest_hash` from an L4 attestation (ERC-8263). The manifest
-struct is defined in ERC-8263 and explicitly includes `inputHash` as a named field:
+`commitmentRef` is a bytes32 commitment to the agent input. ERC-8183 does not mandate the
+specific hash scheme — the exact definition belongs to the attestation layer and is owned by
+the verifier implementation (e.g. ERC-8263, OCP observation commitment, or other schemes).
 
-```
-manifest_struct {
-  inputHash               bytes32   // keccak256 of sanitized inputs — the WYRIWE anchor
-  rawInputHash            bytes32   // keccak256 of raw inputs before sanitization
-  sanitizationPipelineHash bytes32  // hash of the sanitization pipeline applied
-  outputHash              bytes32   // keccak256 of agent outputs
-  l4Signature             bytes     // attestor signature over the struct
-}
+The invariant ERC-8183 requires is:
 
-manifest_hash = keccak256(abi.encode(manifest_struct))
-```
+> `commitmentRef` cryptographically includes `inputHash` — the keccak256 of the sanitized
+> inputs at fund time. This is the WYRIWE anchor: it proves the outcome envelope refers to
+> the same input that was funded, independently of what the agent delivers.
 
-The binding between the outcome envelope and the funded input is:
+Both the ERC-8263 full-struct hash and the OCP observation commitment
+(`keccak256(abi.encode(agentId, modelHash, inputHash, outputHash, timestamp))`) satisfy this
+invariant since both include `inputHash` as an explicit named field.
 
-```
-outcome.commitmentRef == manifest_hash
-manifest_struct.inputHash == keccak256(sanitized_inputs_at_fund_time)
-```
-
-**This chain is independently verifiable.** Anyone holding the manifest struct can compute
-`keccak256(manifest_struct)` and confirm it equals `commitmentRef` without trusting the
-verifier's word. The verifier enforces the binding on-chain; the struct makes it auditable
-off-chain.
+**Independent verifiability:** anyone holding the attestation struct (in whichever scheme the
+verifier uses) can recompute `commitmentRef` from its fields and confirm the binding without
+trusting the verifier's word. The verifier enforces the binding on-chain; the struct makes it
+auditable off-chain.
 
 ### Separation from `deliverable`
 
@@ -81,17 +73,15 @@ ERC-8183 exposes a second `complete()` overload for attested settlement:
 ```solidity
 function complete(
     uint256 jobId,
-    bytes32 attestationHash,  // = manifest_hash = commitmentRef
+    bytes32 attestationHash,  // = commitmentRef — scheme defined by verifier
     address verifier,         // IAttestationVerifier implementation
-    bytes calldata proof      // ABI-encoded manifest_struct + l4_signature
+    bytes calldata proof      // ABI-encoded attestation struct + signature
 ) external;
 ```
 
 The verifier contract (implementing `IAttestationVerifier`) receives `attestationHash` and
-`proof`, reconstructs the manifest struct from the proof, and verifies:
-
-1. `keccak256(manifest_struct) == attestationHash`
-2. `manifest_struct.l4Signature` is valid over the struct from a trusted attestor
+`proof`, and verifies that the commitment is valid and includes `inputHash`. The exact
+verification logic — full-struct hash, OCP commitment, or other — is internal to the verifier.
 
 On success, `attestationHash` is stored as `job.reason`, serving as `commitmentRef` in the
 outcome envelope.
