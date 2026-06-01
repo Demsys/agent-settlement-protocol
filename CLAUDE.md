@@ -15,11 +15,12 @@ A2A, il lui ajoute le settlement trustless et la confiance cryptoéconomique.
 - Google A2A : adapter TypeScript SDK
 
 ## Architecture des contrats
-- AgentJobManager.sol    → implémentation ERC-8183 + fee hook (0.5%), ReentrancyGuardTransient (EIP-1153)
-- EvaluatorRegistry.sol  → staking, sélection, slashing des évaluateurs, ReentrancyGuardTransient
-- Treasury.sol           → reçoit 20% des fees, stub buyback-burn (IS_STUB=true en testnet)
-- ReputationBridge.sol   → bridge outcomes ERC-8183 → ERC-8004
-- ProtocolToken.sol      → ERC-20 avec burn et governance
+- AgentJobManager.sol        → implémentation ERC-8183, fee 0.5% dans complete()/reject(), ReentrancyGuardTransient (EIP-1153)
+- IAttestationVerifier.sol   → interface pluggable pour attested complete() (ERC-8263/OCP compatible)
+- EvaluatorRegistry.sol      → staking, sélection, slashing des évaluateurs, ReentrancyGuardTransient
+- Treasury.sol               → reçoit 20% des fees, stub buyback-burn (IS_STUB=true en testnet)
+- ReputationBridge.sol       → bridge outcomes ERC-8183 → ERC-8004
+- ProtocolToken.sol          → ERC-20 avec burn et governance
 
 ## Modèle de fees
 - Fee proportionnel : `budget * feeRate / 10_000` (feeRate = 50 bps = 0.5% par défaut)
