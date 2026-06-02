@@ -108,12 +108,12 @@ not defined by §11 itself.
 
 These specifications are referenced by Ethereum Magicians thread URLs pending editor merge:
 
-- **ERC-8263** (L4 attestation, manifest struct definition):
-  https://ethereum-magicians.org/t/erc-8263-verifiable-agent-inference-attestation/28047
-- **ERC-8274** (IProofVerifier interface, basis for IAttestationVerifier):
-  https://ethereum-magicians.org/t/erc-8274-on-chain-proof-verifier-interface/28134
-- **ERC-8265 §11** (outcome envelope reservation):
-  https://ethereum-magicians.org/t/erc-8265-agentic-commerce-outcome-envelopes/27956
+- **ERC-8263** (Onchain Proof Layer for AI Agents):
+  https://ethereum-magicians.org/t/erc-8263-onchain-proof-layer-for-ai-agents/28577
+- **ERC-8274** (AI Inference Proof Verification — IProofVerifier interface):
+  https://ethereum-magicians.org/t/erc-8274-ai-inference-proof-verification/28083
+- **ERC-8265 §11** (Prepared Transaction Envelope — Appendix B: Outcome Reporting, Non-normative):
+  https://ethereum-magicians.org/t/erc-8265-prepared-transaction-envelope/28557
 
 ---
 
