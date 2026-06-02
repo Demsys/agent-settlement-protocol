@@ -93,6 +93,21 @@ IAttestationVerifier.verify(attestationHash, proof) → bool
 The verifier manages its own trusted attestor set. ERC-8183 is agnostic to the attestation
 scheme — any IAttestationVerifier implementation satisfying the interface may be used.
 
+**Composability note:** `IAttestationVerifier` keeps `attestationHash` opaque to the settlement
+contract by design — ERC-8183 does not need to inspect input or output content. Integrators
+who require explicit `inputHash` / `outputHash` surface for downstream composability (slashing
+on specific outputs, cross-node consistency verification) should implement a verifier backed by
+ERC-8274 `IProofVerifier`:
+
+```
+verify(bytes32 inputHash, bytes32 outputHash, bytes calldata metadata, bytes calldata proof) → bool
+```
+
+`IAttestationVerifier.verify()` can wrap `IProofVerifier` internally, passing `inputHash` and
+`outputHash` derived from the proof struct. The settlement layer remains agnostic; composability
+is handled at the verifier layer. Reference: `WyriweProofVerifier` (Ensub, `ccip-router@0.3.0`,
+deployed Sepolia `0x001eFFa0fD1D171b164808644678F3301d8EDC96`).
+
 ---
 
 ## Producer-Loop Disposition
