@@ -141,8 +141,18 @@ These specifications are referenced by Ethereum Magicians thread URLs pending ed
 
 ## External Implementations
 
-| Implementation | Attestation Scheme | Deployed (Sepolia) | Source |
-|---|---|---|---|
-| `WyriweAttestationVerifier` (Ensub / ccip-router) | OCP observation commitment — `keccak256(abi.encode(agentId, modelHash, inputHash, outputHash, timestamp))` | `0x9515D6e53D2D45C1CFE6181943ca11C150C2bf61` | `npm ccip-router@0.1.1` |
+| Implementation | Interface | Deployed (Sepolia) | Source | Status |
+|---|---|---|---|---|
+| `WyriweAttestationVerifier` (Ensub) | `IAttestationVerifier` (ERC-8183) | `0x9515D6e53D2D45C1CFE6181943ca11C150C2bf61` | `ccip-router@0.1.1` | **Deprecated** |
+| `WyriweProofVerifier` (Ensub) | `IProofVerifier` (ERC-8274) | `0x001eFFa0fD1D171b164808644678F3301d8EDC96` | `ccip-router@0.3.0` | Current |
 
-`WyriweAttestationVerifier.verify()` recovers the signer from the EIP-712 signature over `WyriweAttestation`, recomputes `commitmentHash` from the decoded struct fields, and checks both against `attestationHash`. No external contract calls. Satisfies the §B.x invariant: `commitmentHash` includes `inputHash` as an explicit named field in the ABI encoding.
+`WyriweProofVerifier` implements ERC-8274 `IProofVerifier`, not `IAttestationVerifier`. It cannot
+be passed directly as the `verifier` parameter in ERC-8183's attested `complete()`. An adapter
+contract implementing `IAttestationVerifier` and internally delegating to `IProofVerifier` is
+required. Call params for `WyriweProofVerifier`:
+
+- `metadata = abi.encode(agentId, registry)` — authorized signer identity
+- `proof = abi.encode(modelHash, rawInputHash, sanitizationPipelineHash, commitmentHash, timestamp, sig)` — cryptographic material
+
+The verifier recomputes `commitmentHash`, reconstructs the EIP-712 digest, and recovers the
+signer. No external calls. Satisfies the §B.x invariant: `inputHash` is an explicit named field.
