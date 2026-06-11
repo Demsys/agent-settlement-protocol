@@ -247,6 +247,31 @@ interface IAgentJobManager {
     /// @param verifier The IAttestationVerifier contract that returned false.
     error AttestationFailed(uint256 jobId, address verifier);
 
+    /// @notice Thrown when the IAgentVerifier complete() overload is called and
+    ///         IAgentVerifier.verify() returns valid=false.
+    /// @param jobId    The job on which verification failed.
+    /// @param verifier The IAgentVerifier contract that returned valid=false.
+    error VerificationFailed(uint256 jobId, address verifier);
+
+    /// @notice Emitted by the IAgentVerifier complete() overload on successful settlement.
+    ///         Carries the full preimage to independently recompute verificationDigest.
+    ///         Compatible with ERC-8275 challenge window mechanisms — the preimage in this
+    ///         event is sufficient for any party to recompute and verify the digest without
+    ///         trusting the settlement contract's storage. (Informative cross-reference only;
+    ///         ERC-8183 does not take a normative dependency on ERC-8275.)
+    /// @param jobId              The settled job.
+    /// @param agentId            Agent identifier passed to IAgentVerifier.verify().
+    /// @param inputHash          keccak256 of the sanitized inputs.
+    /// @param outputHash         keccak256 of the agent output.
+    /// @param verificationDigest Digest returned by IAgentVerifier.verify(), stored as job.reason.
+    event VerificationCompleted(
+        uint256 indexed jobId,
+        bytes32 indexed agentId,
+        bytes32         inputHash,
+        bytes32         outputHash,
+        bytes32         verificationDigest
+    );
+
     // ─── Core ERC-8183 Functions ──────────────────────────────────────────────
 
     /**
@@ -356,6 +381,39 @@ interface IAgentJobManager {
         uint256 jobId,
         bytes32 attestationHash,
         address verifier,
+        bytes calldata proof
+    ) external;
+
+    /**
+     * @notice IAgentVerifier variant of complete() — resolves the evaluator's IAgentVerifier
+     *         at settlement time and delegates proof verification to it (ERC-8274 v0.2).
+     * @dev The evaluator contract must implement IAgentVerifiable to declare its IAgentVerifier.
+     *      EvaluatorRegistry is unaware of IAgentVerifiable — the verifier is a settlement-layer
+     *      concern resolved by AgentJobManager at complete() time, not at staking time.
+     *
+     *      CEI pattern:
+     *      (0) Verify: IAgentVerifier.verify(bytes32(jobId), agentId, inputHash, outputHash, proof)
+     *      (1) Checks: status == Submitted, msg.sender == evaluator
+     *      (2) Effects: status = Completed, reason = verificationDigest, budget = 0
+     *      (3) Interactions: same transfers as complete()
+     *
+     *      verificationDigest (returned by IAgentVerifier.verify()) is stored as job.reason
+     *      and emitted in VerificationCompleted with the full preimage for independent
+     *      recomputability (compatible with ERC-8275 challenge windows — informative only).
+     *
+     *      Reverts with VerificationFailed if valid=false.
+     *      Reverts with ZeroAddress("agentVerifier") if getAgentVerifier() returns address(0).
+     * @param jobId      The job to mark as completed.
+     * @param agentId    Identifier of the agent that executed the task.
+     * @param inputHash  keccak256 of the sanitized inputs.
+     * @param outputHash keccak256 of the agent output.
+     * @param proof      ABI-encoded proof payload passed to IAgentVerifier.verify().
+     */
+    function complete(
+        uint256 jobId,
+        bytes32 agentId,
+        bytes32 inputHash,
+        bytes32 outputHash,
         bytes calldata proof
     ) external;
 

@@ -170,9 +170,29 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IAgentJobManager__factory>;
     getContractFactory(
+      name: "IAgentVerifiable",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.IAgentVerifiable__factory>;
+    getContractFactory(
+      name: "IAgentVerifier",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.IAgentVerifier__factory>;
+    getContractFactory(
       name: "IAttestationVerifier",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IAttestationVerifier__factory>;
+    getContractFactory(
+      name: "IMockManager",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.IMockManager__factory>;
+    getContractFactory(
+      name: "IMockRegistry",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.IMockRegistry__factory>;
+    getContractFactory(
+      name: "MockAgentVerifier",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.MockAgentVerifier__factory>;
     getContractFactory(
       name: "MockAttestationVerifier",
       signerOrOptions?: ethers.Signer | FactoryOptions
@@ -386,10 +406,35 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.IAgentJobManager>;
     getContractAt(
+      name: "IAgentVerifiable",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.IAgentVerifiable>;
+    getContractAt(
+      name: "IAgentVerifier",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.IAgentVerifier>;
+    getContractAt(
       name: "IAttestationVerifier",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.IAttestationVerifier>;
+    getContractAt(
+      name: "IMockManager",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.IMockManager>;
+    getContractAt(
+      name: "IMockRegistry",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.IMockRegistry>;
+    getContractAt(
+      name: "MockAgentVerifier",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.MockAgentVerifier>;
     getContractAt(
       name: "MockAttestationVerifier",
       address: string | ethers.Addressable,
@@ -568,9 +613,29 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAgentJobManager>;
     deployContract(
+      name: "IAgentVerifiable",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IAgentVerifiable>;
+    deployContract(
+      name: "IAgentVerifier",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IAgentVerifier>;
+    deployContract(
       name: "IAttestationVerifier",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAttestationVerifier>;
+    deployContract(
+      name: "IMockManager",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IMockManager>;
+    deployContract(
+      name: "IMockRegistry",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IMockRegistry>;
+    deployContract(
+      name: "MockAgentVerifier",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.MockAgentVerifier>;
     deployContract(
       name: "MockAttestationVerifier",
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -784,10 +849,35 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAgentJobManager>;
     deployContract(
+      name: "IAgentVerifiable",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IAgentVerifiable>;
+    deployContract(
+      name: "IAgentVerifier",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IAgentVerifier>;
+    deployContract(
       name: "IAttestationVerifier",
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IAttestationVerifier>;
+    deployContract(
+      name: "IMockManager",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IMockManager>;
+    deployContract(
+      name: "IMockRegistry",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IMockRegistry>;
+    deployContract(
+      name: "MockAgentVerifier",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.MockAgentVerifier>;
     deployContract(
       name: "MockAttestationVerifier",
       args: any[],

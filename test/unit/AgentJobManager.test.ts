@@ -1658,4 +1658,176 @@ describe("AgentJobManager", function () {
       expect(await usdc.balanceOf(provider.address)).to.equal(balanceBefore + expectedPayment);
     });
   });
+
+  // ── IAgentVerifier complete() ──────────────────────────────────────────────
+
+  describe("IAgentVerifier complete()", function () {
+
+    const AGENT_ID    = ethers.keccak256(ethers.toUtf8Bytes("agent-v1"));
+    const INPUT_HASH  = ethers.keccak256(ethers.toUtf8Bytes("sanitized-input"));
+    const OUTPUT_HASH = ethers.keccak256(ethers.toUtf8Bytes("agent-output"));
+    const PROOF_BYTES = ethers.toUtf8Bytes("mock-proof-payload");
+
+    /**
+     * Fixture: deploys the full stack, then deploys MockAgentVerifier,
+     * registers it as an eligible evaluator (VRT stake + warmup), creates
+     * a job with MockAgentVerifier as evaluator, funds it, and submits.
+     *
+     * MockAgentVerifier acts as evaluator AND verifier (implements both
+     * IAgentVerifiable and IAgentVerifier). It calls complete() via
+     * callComplete() so that msg.sender == job.evaluator.
+     */
+    async function agentVerifierFixture() {
+      const base = await deployFixture();
+      const { manager, registry, protocolToken, usdc, client, provider } = base;
+
+      // Deploy MockAgentVerifier — initially configured to pass
+      const MockAgentVerifierFactory = await ethers.getContractFactory("MockAgentVerifier");
+      const mockVerifier = await MockAgentVerifierFactory.deploy();
+      await mockVerifier.waitForDeployment();
+
+      // Register MockAgentVerifier as eligible evaluator:
+      // transfer VRT tokens to the contract, then stake via the helper
+      await protocolToken.transfer(await mockVerifier.getAddress(), HUNDRED_TOKENS);
+      await mockVerifier.stakeInRegistry(
+        await protocolToken.getAddress(),
+        await registry.getAddress(),
+        HUNDRED_TOKENS
+      );
+      // Advance past warmup period so isEligible() returns true
+      await time.increase(WARMUP_PERIOD + 1);
+
+      // Create, fund, and submit a job with mockVerifier as the explicit evaluator
+      const jobId = await createExplicitJob(
+        manager, client, provider.address, await mockVerifier.getAddress(), await usdc.getAddress()
+      );
+      await manager.connect(client).setBudget(jobId, FIVE_USDC);
+      await usdc.mint(client.address, FIVE_USDC);
+      await usdc.connect(client).approve(await manager.getAddress(), FIVE_USDC);
+      await manager.connect(client).fund(jobId, FIVE_USDC);
+      await manager.connect(provider).submit(jobId, DELIVERABLE);
+
+      return { ...base, mockVerifier, jobId };
+    }
+
+    it("completes the job and stores verificationDigest as job.reason", async function () {
+      const { manager, mockVerifier, jobId } = await loadFixture(agentVerifierFixture);
+
+      await mockVerifier.callComplete(
+        await manager.getAddress(), jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+      );
+
+      const job = await manager.getJob(jobId);
+      expect(job.status).to.equal(JobStatus.Completed);
+      expect(job.budget).to.equal(0n);
+      // verificationDigest is deterministic: keccak256(abi.encode(taskId, agentId, inputHash, outputHash, true))
+      const expectedDigest = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes32", "bytes32", "bytes32", "bytes32", "bool"],
+          [ethers.zeroPadValue(ethers.toBeHex(jobId), 32), AGENT_ID, INPUT_HASH, OUTPUT_HASH, true]
+        )
+      );
+      expect(job.reason).to.equal(expectedDigest);
+    });
+
+    it("emits VerificationCompleted before JobCompleted", async function () {
+      const { manager, mockVerifier, jobId } = await loadFixture(agentVerifierFixture);
+
+      const expectedDigest = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes32", "bytes32", "bytes32", "bytes32", "bool"],
+          [ethers.zeroPadValue(ethers.toBeHex(jobId), 32), AGENT_ID, INPUT_HASH, OUTPUT_HASH, true]
+        )
+      );
+
+      await expect(
+        mockVerifier.callComplete(
+          await manager.getAddress(), jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+        )
+      )
+        .to.emit(manager, "VerificationCompleted")
+        .withArgs(jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, expectedDigest)
+        .and.to.emit(manager, "JobCompleted");
+    });
+
+    it("emits JobCompleted and FeeDistributed with correct amounts", async function () {
+      const { manager, mockVerifier, jobId } = await loadFixture(agentVerifierFixture);
+
+      const expectedFee         = FIVE_USDC * BigInt(FEE_RATE) / 10_000n;
+      const expectedPayment     = FIVE_USDC - expectedFee;
+      const expectedEvalFee     = expectedFee * 8_000n / 10_000n;
+      const expectedTreasuryFee = expectedFee - expectedEvalFee;
+
+      await expect(
+        mockVerifier.callComplete(
+          await manager.getAddress(), jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+        )
+      )
+        .to.emit(manager, "JobCompleted")
+        .withArgs(jobId, anyValue, expectedPayment, expectedFee)
+        .and.to.emit(manager, "FeeDistributed")
+        .withArgs(jobId, await mockVerifier.getAddress(), expectedEvalFee, expectedTreasuryFee);
+    });
+
+    it("reverts with VerificationFailed when verifier returns false", async function () {
+      const { manager, mockVerifier, jobId } = await loadFixture(agentVerifierFixture);
+
+      await mockVerifier.setResult(false);
+
+      await expect(
+        mockVerifier.callComplete(
+          await manager.getAddress(), jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+        )
+      ).to.be.revertedWithCustomError(manager, "VerificationFailed")
+        .withArgs(jobId, await mockVerifier.getAddress());
+    });
+
+    it("reverts with NotAuthorized when called by non-evaluator", async function () {
+      const { manager, stranger, jobId } = await loadFixture(agentVerifierFixture);
+
+      await expect(
+        manager.connect(stranger)["complete(uint256,bytes32,bytes32,bytes32,bytes)"](
+          jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+        )
+      ).to.be.revertedWithCustomError(manager, "NotAuthorized")
+        .withArgs(stranger.address, jobId, "evaluator");
+    });
+
+    it("reverts with InvalidJobStatus when job is not Submitted", async function () {
+      const { manager, mockVerifier, client, provider, usdc } =
+        await loadFixture(agentVerifierFixture);
+
+      // Create a second job but stop at Funded (do not submit)
+      const jobId2 = await createExplicitJob(
+        manager, client, provider.address, await mockVerifier.getAddress(), await usdc.getAddress()
+      );
+      await manager.connect(client).setBudget(jobId2, FIVE_USDC);
+      await usdc.mint(client.address, FIVE_USDC);
+      await usdc.connect(client).approve(await manager.getAddress(), FIVE_USDC);
+      await manager.connect(client).fund(jobId2, FIVE_USDC);
+      // Still Funded — not yet Submitted
+
+      await expect(
+        mockVerifier.callComplete(
+          await manager.getAddress(), jobId2, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+        )
+      ).to.be.revertedWithCustomError(manager, "InvalidJobStatus")
+        .withArgs(jobId2, JobStatus.Funded);
+    });
+
+    it("transfers the correct payment to provider after fee deduction", async function () {
+      const { manager, mockVerifier, provider, usdc, jobId } =
+        await loadFixture(agentVerifierFixture);
+
+      const expectedFee     = FIVE_USDC * BigInt(FEE_RATE) / 10_000n;
+      const expectedPayment = FIVE_USDC - expectedFee;
+      const balanceBefore   = await usdc.balanceOf(provider.address);
+
+      await mockVerifier.callComplete(
+        await manager.getAddress(), jobId, AGENT_ID, INPUT_HASH, OUTPUT_HASH, PROOF_BYTES
+      );
+
+      expect(await usdc.balanceOf(provider.address)).to.equal(balanceBefore + expectedPayment);
+    });
+  });
 });

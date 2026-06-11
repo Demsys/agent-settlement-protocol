@@ -167,6 +167,22 @@ const _abi = [
   {
     inputs: [
       {
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        internalType: "address",
+        name: "verifier",
+        type: "address",
+      },
+    ],
+    name: "VerificationFailed",
+    type: "error",
+  },
+  {
+    inputs: [
+      {
         internalType: "string",
         name: "paramName",
         type: "string",
@@ -501,6 +517,43 @@ const _abi = [
     type: "event",
   },
   {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        indexed: true,
+        internalType: "bytes32",
+        name: "agentId",
+        type: "bytes32",
+      },
+      {
+        indexed: false,
+        internalType: "bytes32",
+        name: "inputHash",
+        type: "bytes32",
+      },
+      {
+        indexed: false,
+        internalType: "bytes32",
+        name: "outputHash",
+        type: "bytes32",
+      },
+      {
+        indexed: false,
+        internalType: "bytes32",
+        name: "verificationDigest",
+        type: "bytes32",
+      },
+    ],
+    name: "VerificationCompleted",
+    type: "event",
+  },
+  {
     inputs: [
       {
         internalType: "uint256",
@@ -542,6 +595,39 @@ const _abi = [
         internalType: "address",
         name: "verifier",
         type: "address",
+      },
+      {
+        internalType: "bytes",
+        name: "proof",
+        type: "bytes",
+      },
+    ],
+    name: "complete",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        internalType: "uint256",
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        internalType: "bytes32",
+        name: "agentId",
+        type: "bytes32",
+      },
+      {
+        internalType: "bytes32",
+        name: "inputHash",
+        type: "bytes32",
+      },
+      {
+        internalType: "bytes32",
+        name: "outputHash",
+        type: "bytes32",
       },
       {
         internalType: "bytes",

@@ -10,6 +10,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 // ─── Internal imports ────────────────────────────────────────────────────────
 import "../interfaces/IAgentJobManager.sol";
 import "../interfaces/IAttestationVerifier.sol";
+import "../interfaces/IAgentVerifier.sol";
+import "../interfaces/IAgentVerifiable.sol";
 import "./EvaluatorRegistry.sol";
 
 // ─── Local interface for ReputationBridge ────────────────────────────────────
@@ -705,6 +707,52 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
         if (!IAttestationVerifier(verifier).verify(attestationHash, proof))
             revert AttestationFailed(jobId, verifier);
         _settleComplete(jobId, attestationHash);
+    }
+
+    /**
+     * @notice IAgentVerifier variant of complete() — resolves the evaluator's IAgentVerifier
+     *         at settlement time and delegates proof verification (ERC-8274 v0.2 pattern).
+     * @dev The evaluator contract must implement IAgentVerifiable.getAgentVerifier().
+     *      EvaluatorRegistry is unaware of this interface — the verifier is resolved here
+     *      at complete() time, keeping EvaluatorRegistry narrow (staking, slashing, liveness).
+     *
+     *      verificationDigest returned by IAgentVerifier.verify() is stored as job.reason
+     *      and emitted in VerificationCompleted with the full preimage, enabling any observer
+     *      to independently recompute and confirm the digest without trusting contract storage.
+     *
+     * @param jobId      The job to mark as completed.
+     * @param agentId    Identifier of the agent that executed the task.
+     * @param inputHash  keccak256 of the sanitized inputs (WYRIWE: keccak256(sanitized_input)).
+     * @param outputHash keccak256 of the agent output.
+     * @param proof      ABI-encoded proof payload passed verbatim to IAgentVerifier.verify().
+     */
+    function complete(
+        uint256 jobId,
+        bytes32 agentId,
+        bytes32 inputHash,
+        bytes32 outputHash,
+        bytes calldata proof
+    ) external nonReentrant jobMustExist(jobId) {
+        // Resolve the evaluator's declared IAgentVerifier. The evaluator contract must
+        // implement IAgentVerifiable — EOA evaluators cannot use this overload.
+        address agentVerifier = IAgentVerifiable(jobs[jobId].evaluator).getAgentVerifier();
+        if (agentVerifier == address(0)) revert ZeroAddress("agentVerifier");
+
+        // verify() must be view — nonReentrant blocks any reentrant AgentJobManager call
+        // from within the verifier (same guarantee as the IAttestationVerifier overload).
+        (bool valid, bytes32 verificationDigest) = IAgentVerifier(agentVerifier).verify(
+            bytes32(jobId),
+            agentId,
+            inputHash,
+            outputHash,
+            proof
+        );
+        if (!valid) revert VerificationFailed(jobId, agentVerifier);
+
+        // Emit before _settleComplete so the preimage is anchored in the same transaction
+        // as the state transition, in log order before JobCompleted.
+        emit VerificationCompleted(jobId, agentId, inputHash, outputHash, verificationDigest);
+        _settleComplete(jobId, verificationDigest);
     }
 
     /**

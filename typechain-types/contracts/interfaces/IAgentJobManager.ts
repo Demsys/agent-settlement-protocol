@@ -71,6 +71,7 @@ export interface IAgentJobManagerInterface extends Interface {
       | "claimExpired"
       | "claimRefund"
       | "complete(uint256,bytes32,address,bytes)"
+      | "complete(uint256,bytes32,bytes32,bytes32,bytes)"
       | "complete(uint256,bytes32)"
       | "createJob"
       | "evaluationFee"
@@ -98,6 +99,7 @@ export interface IAgentJobManagerInterface extends Interface {
       | "JobSubmitted"
       | "RefundClaimed"
       | "RefundPending"
+      | "VerificationCompleted"
   ): EventFragment;
 
   encodeFunctionData(
@@ -111,6 +113,10 @@ export interface IAgentJobManagerInterface extends Interface {
   encodeFunctionData(
     functionFragment: "complete(uint256,bytes32,address,bytes)",
     values: [BigNumberish, BytesLike, AddressLike, BytesLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "complete(uint256,bytes32,bytes32,bytes32,bytes)",
+    values: [BigNumberish, BytesLike, BytesLike, BytesLike, BytesLike]
   ): string;
   encodeFunctionData(
     functionFragment: "complete(uint256,bytes32)",
@@ -163,6 +169,10 @@ export interface IAgentJobManagerInterface extends Interface {
   ): Result;
   decodeFunctionResult(
     functionFragment: "complete(uint256,bytes32,address,bytes)",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "complete(uint256,bytes32,bytes32,bytes32,bytes)",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -430,6 +440,34 @@ export namespace RefundPendingEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace VerificationCompletedEvent {
+  export type InputTuple = [
+    jobId: BigNumberish,
+    agentId: BytesLike,
+    inputHash: BytesLike,
+    outputHash: BytesLike,
+    verificationDigest: BytesLike
+  ];
+  export type OutputTuple = [
+    jobId: bigint,
+    agentId: string,
+    inputHash: string,
+    outputHash: string,
+    verificationDigest: string
+  ];
+  export interface OutputObject {
+    jobId: bigint;
+    agentId: string;
+    inputHash: string;
+    outputHash: string;
+    verificationDigest: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export interface IAgentJobManager extends BaseContract {
   connect(runner?: ContractRunner | null): IAgentJobManager;
   waitForDeployment(): Promise<this>;
@@ -486,6 +524,18 @@ export interface IAgentJobManager extends BaseContract {
       jobId: BigNumberish,
       attestationHash: BytesLike,
       verifier: AddressLike,
+      proof: BytesLike
+    ],
+    [void],
+    "nonpayable"
+  >;
+
+  "complete(uint256,bytes32,bytes32,bytes32,bytes)": TypedContractMethod<
+    [
+      jobId: BigNumberish,
+      agentId: BytesLike,
+      inputHash: BytesLike,
+      outputHash: BytesLike,
       proof: BytesLike
     ],
     [void],
@@ -566,6 +616,19 @@ export interface IAgentJobManager extends BaseContract {
       jobId: BigNumberish,
       attestationHash: BytesLike,
       verifier: AddressLike,
+      proof: BytesLike
+    ],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
+    nameOrSignature: "complete(uint256,bytes32,bytes32,bytes32,bytes)"
+  ): TypedContractMethod<
+    [
+      jobId: BigNumberish,
+      agentId: BytesLike,
+      inputHash: BytesLike,
+      outputHash: BytesLike,
       proof: BytesLike
     ],
     [void],
@@ -730,6 +793,13 @@ export interface IAgentJobManager extends BaseContract {
     RefundPendingEvent.OutputTuple,
     RefundPendingEvent.OutputObject
   >;
+  getEvent(
+    key: "VerificationCompleted"
+  ): TypedContractEvent<
+    VerificationCompletedEvent.InputTuple,
+    VerificationCompletedEvent.OutputTuple,
+    VerificationCompletedEvent.OutputObject
+  >;
 
   filters: {
     "BudgetSet(uint256,uint128)": TypedContractEvent<
@@ -873,6 +943,17 @@ export interface IAgentJobManager extends BaseContract {
       RefundPendingEvent.InputTuple,
       RefundPendingEvent.OutputTuple,
       RefundPendingEvent.OutputObject
+    >;
+
+    "VerificationCompleted(uint256,bytes32,bytes32,bytes32,bytes32)": TypedContractEvent<
+      VerificationCompletedEvent.InputTuple,
+      VerificationCompletedEvent.OutputTuple,
+      VerificationCompletedEvent.OutputObject
+    >;
+    VerificationCompleted: TypedContractEvent<
+      VerificationCompletedEvent.InputTuple,
+      VerificationCompletedEvent.OutputTuple,
+      VerificationCompletedEvent.OutputObject
     >;
   };
 }
