@@ -129,6 +129,17 @@ These specifications are referenced by Ethereum Magicians thread URLs pending ed
   https://ethereum-magicians.org/t/erc-8274-ai-inference-proof-verification/28083
 - **ERC-8265 §11** (Prepared Transaction Envelope — Appendix B: Outcome Reporting, Non-normative):
   https://ethereum-magicians.org/t/erc-8265-prepared-transaction-envelope/28557
+- **ERC-8275** (Usage-Based Economic Compensation for Heterogeneous Mesh Nodes — discussion):
+  https://ethereum-magicians.org/t/erc-8275-agent-service-discovery-and-escrow-payments/28622
+
+### Cross-Reference: ERC-8275
+
+ERC-8275 defines a four-layer settlement protocol for CCIP Read mesh nodes. Layer 4
+(`EscrowV1`) accepts a generic `challenge(uint256 periodId, bytes4 proofType, bytes calldata proofData)`
+entry point where `proofType` routes to the correct verifier at settlement time — the same
+soft-declaration pattern as `IAgentVerifiable.getAgentVerifier()`. `VerificationCompleted`
+events carrying a full pre-image are compatible with ERC-8275's period-keyed attestation
+index. No normative dependency in either direction.
 
 ---
 
