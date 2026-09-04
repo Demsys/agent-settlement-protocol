@@ -112,22 +112,17 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
     ///      nor treasury receive zero at any governance-approved feeRate (1..500).
     uint128 public constant MIN_BUDGET = 1_000_000;
 
-    /// @notice Minimum time the Evaluator has to evaluate after a Provider submission.
-    /// @dev FINDING #3: prevents the following griefing attack:
+    /// @notice Minimum time the Evaluator is guaranteed after a Provider submission.
+    /// @dev FINDING #3 / #384: prevents the following griefing attack:
     ///      1. Client sets a tight deadline (e.g. 10 minutes)
     ///      2. Provider submits at the last second
     ///      3. Evaluator cannot evaluate in time (network latency, off-chain verification)
     ///      4. Client calls claimExpired() and recovers funds despite a valid submission
-    ///      When submit() is called and less than MIN_EVALUATION_WINDOW remains before the
-    ///      deadline, the deadline is automatically extended to block.timestamp + MIN_EVALUATION_WINDOW.
+    ///      The deadline is left IMMUTABLE; claimExpired() instead gates a Submitted job on
+    ///      max(deadline, submittedAt + MIN_EVALUATION_WINDOW), so a valid submission always
+    ///      guarantees the evaluator a full window without mutating the observable deadline.
     ///      24 hours is chosen as a reasonable evaluation window for off-chain AI tasks.
     uint256 public constant MIN_EVALUATION_WINDOW = 24 hours;
-
-    /// @notice Grace period after submission during which claimExpired() is blocked.
-    /// @dev Gives off-chain evaluators (AI models, oracles) time to complete verification
-    ///      and call complete() before the client can reclaim funds via claimExpired().
-    ///      1 hour matches the PR#13 merged in erc-8183/base-contracts.
-    uint64 public constant EVALUATION_GRACE_PERIOD = 1 hours;
 
     /// @notice Mandatory delay between a governance proposal and its execution.
     /// @dev FINDING-005 (centralisation): a 2-day window lets stakeholders detect and
@@ -258,8 +253,8 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
     event EvaluatorAssigned(uint256 indexed jobId, address indexed evaluator);
 
     // DeadlineExtended is declared in IAgentJobManager and inherited — not redeclared here.
-    // It is emitted by both extendDeadline() (voluntary, client-initiated) and
-    // submit() (automatic, when less than MIN_EVALUATION_WINDOW remains before deadline).
+    // It is emitted by extendDeadline() (voluntary, client-initiated). submit() no longer
+    // mutates the deadline (#384) — the evaluator window is enforced in claimExpired().
 
     /**
      * @notice Emitted when a Client reopens a Rejected job for a new execution attempt.
@@ -312,9 +307,6 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
 
     /// @notice Thrown when deliverable hash is zero (not allowed in submit).
     error ZeroDeliverable(uint256 jobId);
-
-    /// @notice Thrown when claimExpired() is called during the post-submission grace period.
-    error GracePeriodActive(uint256 jobId, uint64 submittedAt, uint64 graceEndsAt);
 
     /// @notice Thrown when extendDeadline() is called with a newDeadline <= current deadline.
     /// @param current  The job's existing deadline.
@@ -648,22 +640,11 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
         job.submittedAt = uint64(block.timestamp);
         job.deliverable = deliverable;
 
-        // FINDING #3: deadline griefing protection.
-        // If less than MIN_EVALUATION_WINDOW (24h) remains between now and the deadline,
-        // automatically extend the deadline to block.timestamp + MIN_EVALUATION_WINDOW.
-        // Without this guard, a client can set a tight deadline so that even a valid
-        // submission leaves the evaluator no time to act, then call claimExpired() to
-        // recover the funds while the provider gets nothing despite having delivered.
-        // We prefer the automatic extension over requiring the client to extend proactively,
-        // because a griefing client would never voluntarily extend — the protection must
-        // be enforced by the protocol itself.
-        uint64 currentDeadline = job.deadline;
-        if (block.timestamp + MIN_EVALUATION_WINDOW > currentDeadline) {
-            uint64 newDeadline = uint64(block.timestamp + MIN_EVALUATION_WINDOW);
-            job.deadline = newDeadline;
-            emit DeadlineExtended(jobId, currentDeadline, newDeadline);
-        }
-
+        // FINDING #3 / #384 consensus: the deadline is left IMMUTABLE on submit.
+        // The evaluator's minimum evaluation window is enforced at settlement time in
+        // claimExpired() via max(deadline, submittedAt + MIN_EVALUATION_WINDOW). Keeping
+        // expiredAt stable preserves a legible deadline for external observers, while a
+        // griefing client still cannot compress the evaluator's window to ~zero.
         emit JobSubmitted(jobId, deliverable);
     }
 
@@ -993,19 +974,21 @@ contract AgentJobManager is IAgentJobManager, ReentrancyGuardTransient, Ownable 
         }
         if (msg.sender != job.client) revert NotAuthorized(msg.sender, jobId, "client");
 
-        // Deadline must have passed for expiration to be valid.
-        if (block.timestamp <= job.deadline) {
-            revert DeadlineNotPassed(jobId, job.deadline, uint64(block.timestamp));
+        // #384 consensus: the deadline is immutable, so the client cannot reclaim until
+        // the effective expiry. For a Submitted job the evaluator is guaranteed a full
+        // MIN_EVALUATION_WINDOW measured from submission, so the effective expiry is
+        // max(deadline, submittedAt + MIN_EVALUATION_WINDOW). A griefing client therefore
+        // cannot compress the evaluator's window by setting a tight deadline. Funded jobs
+        // (never submitted) expire at the plain deadline.
+        uint64 effectiveExpiry = job.deadline;
+        if (job.status == JobStatus.Submitted) {
+            uint64 windowEnd = job.submittedAt + uint64(MIN_EVALUATION_WINDOW);
+            if (windowEnd > effectiveExpiry) {
+                effectiveExpiry = windowEnd;
+            }
         }
-
-        // Grace period: if the Provider submitted work and the Evaluator has not yet
-        // had time to review it, block claimExpired() for EVALUATION_GRACE_PERIOD after submission.
-        // This prevents a client from front-running a slow off-chain evaluator (AI model, oracle)
-        // that legitimately needs seconds to minutes to complete verification.
-        // Only applies to Submitted jobs — Funded jobs have no submittedAt and are unaffected.
-        if (job.status == JobStatus.Submitted && job.submittedAt != 0 &&
-            block.timestamp < job.submittedAt + EVALUATION_GRACE_PERIOD) {
-            revert GracePeriodActive(jobId, job.submittedAt, uint64(job.submittedAt + EVALUATION_GRACE_PERIOD));
+        if (block.timestamp <= effectiveExpiry) {
+            revert DeadlineNotPassed(jobId, effectiveExpiry, uint64(block.timestamp));
         }
 
         // EFFECTS

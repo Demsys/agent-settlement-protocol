@@ -829,11 +829,14 @@ describe("AgentJobManager", function () {
       expect(pending).to.equal(FIVE_USDC);
     });
 
-    it("should expire a Submitted job after deadline and register refund (FINDING-004)", async function () {
+    it("should expire a Submitted job after the evaluation window and register refund (FINDING-004)", async function () {
       const { manager, usdc, client } = await loadFixture(submittedJobFixture);
 
       const job = await manager.getJob(1n);
-      await time.increaseTo(Number(job.deadline) + 1);
+      const win = await manager.MIN_EVALUATION_WINDOW();
+      // Immutable deadline: the client can only reclaim after the evaluator's guaranteed
+      // window (submittedAt + MIN_EVALUATION_WINDOW), not at the original deadline.
+      await time.increaseTo(Number(job.submittedAt) + Number(win) + 1);
 
       await expect(manager.connect(client).claimExpired(1n))
         .to.emit(manager, "JobExpired")
@@ -870,6 +873,33 @@ describe("AgentJobManager", function () {
       await expect(manager.connect(client).claimExpired(1n))
         .to.be.revertedWithCustomError(manager, "InvalidJobStatus")
         .withArgs(1n, JobStatus.Open);
+    });
+
+    // ── Delta a (#384 consensus): immutable deadline + max() expiry gate ──────
+    it("keeps the original deadline immutable when the provider submits (#384)", async function () {
+      const { manager, provider } = await loadFixture(fundedJobFixture);
+
+      const before = await manager.getJob(1n);
+      await manager.connect(provider).submit(1n, DELIVERABLE);
+      const after = await manager.getJob(1n);
+
+      // submit() must NOT mutate the deadline; the evaluation window is enforced
+      // in claimExpired() via max(deadline, submittedAt + MIN_EVALUATION_WINDOW).
+      expect(after.deadline).to.equal(before.deadline);
+    });
+
+    it("blocks claimExpired until submittedAt + MIN_EVALUATION_WINDOW even past the original deadline (#384)", async function () {
+      const { manager, client, provider } = await loadFixture(fundedJobFixture);
+
+      const before = await manager.getJob(1n);
+      await manager.connect(provider).submit(1n, DELIVERABLE);
+
+      // Advance past the (immutable) original deadline, but still inside the 24h
+      // evaluator window measured from submission.
+      await time.increaseTo(Number(before.deadline) + 2 * 3600);
+
+      await expect(manager.connect(client).claimExpired(1n))
+        .to.be.revertedWithCustomError(manager, "DeadlineNotPassed");
     });
   });
 
